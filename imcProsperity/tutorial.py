@@ -27,9 +27,14 @@ class ProductTrader:
         self.group = name if group is None else group
         pass
 
+    def getPrice(self):
+        return
         
     def getSD(self):
         return pd.DataFrame(self.price).stdev()
+
+    def getMean(self):
+        return pd.DataFrame(self.price).mean()
 
 
 ### Utilities ### Utilities ### Utilities ### Utilities ### Utilities ###
@@ -38,8 +43,7 @@ class ProductTrader:
 class CommodityTrader(ProductTrader):
     def __init__(self, name, sd=0):
         super().__init__(COMMODITY_SYMBOL, sd)
-    
-
+   
 
 ### Commodity ### Commodity ### Commodity ### Commodity ### Commodity ###
 ### Stock ### Stock ### Stock ### Stock ### Stock ###
@@ -48,8 +52,6 @@ class StockTrader(ProductTrader):
     def __init__(self, name, sd=0, group=None):
         super().__init__(STOCK_SYMBOL, sd, group)
         
-    def getMean(self):
-        return pd.DataFrame(self.price).mean()
 
 ### Stock ### Stock ### Stock ### Stock ### Stock ###
 ### Trader ### Trader ### Trader ### Trader ### Trader ###
