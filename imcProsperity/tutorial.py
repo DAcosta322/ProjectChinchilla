@@ -1,6 +1,58 @@
 from datamodel import OrderDepth, UserId, TradingState, Order
 from typing import List
 import string
+import pandas as pd
+
+### General ### General ### General ### General ### General ###
+
+COMMODITY_SYMBOL = "EMERALD"
+STOCK_SYMBOL = "TOMATO"
+
+POS_LIMITS = {
+    COMMODITY_SYMBOL : 80,
+    STOCK_SYMBOL : 80
+}
+
+### General ### General ### General ### General ### General ###
+### Utilities ### Utilities ### Utilities ### Utilities ### Utilities ###
+
+class ProductTrader:
+    def __init__(self,name,sd=0,group=None):
+        
+        self.orders = [] 
+        self.price = []
+        
+        self.name= name
+        self.sd = sd
+        self.group = name if group is None else group
+        pass
+
+        
+    def getSD(self):
+        return pd.DataFrame(self.price).stdev()
+
+
+### Utilities ### Utilities ### Utilities ### Utilities ### Utilities ###
+### Commodity ### Commodity ### Commodity ### Commodity ### Commodity ###
+
+class CommodityTrader(ProductTrader):
+    def __init__(self, name, sd=0):
+        super().__init__(COMMODITY_SYMBOL, sd)
+    
+
+
+### Commodity ### Commodity ### Commodity ### Commodity ### Commodity ###
+### Stock ### Stock ### Stock ### Stock ### Stock ###
+
+class StockTrader(ProductTrader):
+    def __init__(self, name, sd=0, group=None):
+        super().__init__(STOCK_SYMBOL, sd, group)
+        
+    def getMean(self):
+        return pd.DataFrame(self.price).mean()
+
+### Stock ### Stock ### Stock ### Stock ### Stock ###
+### Trader ### Trader ### Trader ### Trader ### Trader ###
 
 class Trader:
 
@@ -39,8 +91,8 @@ class Trader:
     
         # String value holding Trader state data required. 
         # It will be delivered as TradingState.traderData on next execution.
-        traderData = "SAMPLE" 
+        traderData = ""
         
         # Sample conversion request. Check more details below. 
-        conversions = 1
+        conversions = 0
         return result, conversions, traderData
