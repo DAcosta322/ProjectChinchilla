@@ -17,11 +17,12 @@ POS_LIMITS = {
 ### Utilities ### Utilities ### Utilities ### Utilities ### Utilities ###
 
 class ProductTrader:
-    def __init__(self,name,sd=0,group=None):
+    def __init__(self,name,mean,sd=0,group=None):
         
         self.orders = [] 
         self.price = []
         
+        self.mean = mean
         self.name= name
         self.sd = sd
         self.group = name if group is None else group
@@ -31,10 +32,12 @@ class ProductTrader:
         return
         
     def getSD(self):
-        return pd.DataFrame(self.price).stdev()
+        self.sd = pd.DataFrame(self.price).stdev()
+        return self.sd
 
     def getMean(self):
-        return pd.DataFrame(self.price).mean()
+        self.mean = pd.DataFrame(self.price).mean()
+        return self.mean
 
 
 ### Utilities ### Utilities ### Utilities ### Utilities ### Utilities ###
