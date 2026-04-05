@@ -19,6 +19,7 @@ import os
 import uuid
 import importlib.util
 import copy
+from datetime import datetime
 from io import StringIO
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -404,6 +405,7 @@ def run_backtest(
     activity_rows = [activity_header]
     sandbox_logs = []
     all_trades = []
+    all_orders = []  # Track all placed orders for analysis
 
     for ts in timestamps:
         prices_at_ts = price_data[ts]
@@ -459,6 +461,40 @@ def run_backtest(
         new_trades = matcher.match(valid_orders, state.order_depths, ts)
         all_trades.extend(new_trades)
 
+        # Track all placed orders with fill information
+        for product, product_orders in orders_dict.items():
+            rejected = product not in valid_orders
+            for order in product_orders:
+                # Calculate how much of this order was filled
+                filled_qty = 0
+                if not rejected:
+                    for t in new_trades:
+                        if t["symbol"] == product and t["price"] == order.price:
+                            if order.quantity > 0 and t["buyer"] == "SUBMISSION":
+                                filled_qty += t["quantity"]
+                            elif order.quantity < 0 and t["seller"] == "SUBMISSION":
+                                filled_qty += t["quantity"]
+
+                requested_qty = abs(order.quantity)
+                if rejected:
+                    status = "rejected"
+                elif filled_qty == 0:
+                    status = "unfilled"
+                elif filled_qty < requested_qty:
+                    status = "partial"
+                else:
+                    status = "filled"
+
+                all_orders.append({
+                    "timestamp": ts,
+                    "symbol": product,
+                    "price": order.price,
+                    "quantity": order.quantity,
+                    "filled_quantity": filled_qty if order.quantity > 0 else -filled_qty,
+                    "side": "BUY" if order.quantity > 0 else "SELL",
+                    "status": status,
+                })
+
         # Build own_trades for next iteration
         own_trades = {p: [] for p in products}
         for t in new_trades:
@@ -503,6 +539,7 @@ def run_backtest(
         "activitiesLog": "\n".join(activity_rows),
         "logs": sandbox_logs,
         "tradeHistory": all_trades,
+        "orderHistory": all_orders,
     }
 
     # Build .json format (matches official Prosperity summary)
@@ -577,7 +614,8 @@ def main():
         sys.exit(1)
 
     data_dir = SCRIPT_DIR / "data"
-    out_dir = SCRIPT_DIR / "logs"
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = SCRIPT_DIR / "logs" / f"{algo_name}_{run_timestamp}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     data_reader = DataReader(data_dir)
@@ -596,6 +634,7 @@ def main():
     print(f"Algorithm : {algo_path.name}")
     print(f"Round     : {args.round}")
     print(f"Days      : {days}")
+    print(f"Output    : {out_dir}")
     print(f"Data dir  : {data_dir}")
     print()
 

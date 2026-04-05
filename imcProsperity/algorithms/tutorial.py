@@ -93,17 +93,18 @@ class CommodityTrader(ProductTrader):
 ### Stock ### Stock ### Stock ### Stock ### Stock ###
 
 class StockTrader(ProductTrader):
-    """Trades TOMATOES using a dynamic mid-price with mean-reversion.
+    """Trades TOMATOES using dual-MA momentum-adjusted fair value.
 
-    Strategy: TOMATOES fluctuate, so we compute fair value from the order
-    book mid-price each tick. We keep a rolling window of recent mid-prices
-    (via traderData) and use the moving average as the fair value signal.
-    - Take any sell orders below the moving average.
-    - Take any buy orders above the moving average.
-    - Post resting bid/ask around the moving average to capture spread.
+    Strategy: Use a fast MA and slow MA to detect price momentum.
+    The fair value is the slow MA shifted by the momentum signal
+    (fast_ma - slow_ma) scaled by a multiplier. This allows the
+    strategy to follow trends rather than fight them, while still
+    capturing mean-reversion during range-bound periods.
     """
 
-    WINDOW_SIZE = 50  # number of ticks for the moving average
+    FAST_WINDOW = 8
+    SLOW_WINDOW = 500
+    SIGNAL_MULT = 0.5
 
     def __init__(self):
         super().__init__(STOCK_SYMBOL, fair_value=5000, pos_limit=POS_LIMITS[STOCK_SYMBOL])
@@ -112,11 +113,17 @@ class StockTrader(ProductTrader):
         mid = self.get_mid_price(order_depth)
         price_history.append(mid)
 
-        # Keep only the last WINDOW_SIZE entries
-        if len(price_history) > self.WINDOW_SIZE:
-            price_history[:] = price_history[-self.WINDOW_SIZE:]
+        # Keep only the last SLOW_WINDOW entries
+        if len(price_history) > self.SLOW_WINDOW:
+            price_history[:] = price_history[-self.SLOW_WINDOW:]
 
-        return sum(price_history) / len(price_history)
+        if len(price_history) >= self.SLOW_WINDOW:
+            fast_ma = sum(price_history[-self.FAST_WINDOW:]) / self.FAST_WINDOW
+            slow_ma = sum(price_history) / len(price_history)
+            signal = fast_ma - slow_ma
+            return slow_ma + signal * self.SIGNAL_MULT
+        else:
+            return mid
 
     def run(self, state: TradingState, price_history: List[float]) -> List[Order]:
         orders: List[Order] = []
