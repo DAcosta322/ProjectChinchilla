@@ -102,7 +102,7 @@ class StockTrader(ProductTrader):
     capturing mean-reversion during range-bound periods.
     """
 
-    FAST_WINDOW = 8
+    FAST_WINDOW = 30
     SLOW_WINDOW = 500
     SIGNAL_MULT = 0.5
 
