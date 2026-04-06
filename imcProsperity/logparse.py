@@ -4,7 +4,7 @@ import io
 from pathlib import Path
 import matplotlib.pyplot as plt
 
-subnum = "53755"
+subnum = input("Subnum:")
 
 dd = "Dump/" + subnum
 jj = subnum + ".json"
@@ -59,4 +59,48 @@ fig.tight_layout()
 out = d / f"{subnum}_pnl.png"
 fig.savefig(out, dpi=150)
 print(f"saved {out}")
+
+# parse trade history into buy/sell/self price series per product
+prices = {}  # product -> {"buy": (ts[], px[]), "sell": (ts[], px[]), "self": (ts[], px[])}
+for t in trade:
+    sym = t["symbol"]
+    if sym not in prices:
+        prices[sym] = {"buy": ([], []), "sell": ([], []), "self": ([], [])}
+    ts = t["timestamp"]
+    px = t["price"]
+    is_buyer = t["buyer"] == "SUBMISSION"
+    is_seller = t["seller"] == "SUBMISSION"
+    if is_buyer and is_seller:
+        prices[sym]["self"][0].append(ts)
+        prices[sym]["self"][1].append(px)
+    elif is_buyer:
+        prices[sym]["buy"][0].append(ts)
+        prices[sym]["buy"][1].append(px)
+    elif is_seller:
+        prices[sym]["sell"][0].append(ts)
+        prices[sym]["sell"][1].append(px)
+
+# plot price graphs
+trade_products = sorted(prices.keys())
+fig2, axes2 = plt.subplots(len(trade_products), 1, figsize=(12, 5 * len(trade_products)), sharex=True)
+if len(trade_products) == 1:
+    axes2 = [axes2]
+
+for ax, product in zip(axes2, trade_products):
+    for label, color, marker in [("buy", "green", "^"), ("sell", "red", "v"), ("self", "blue", "o")]:
+        xs, ys = prices[product][label]
+        if xs:
+            ax.scatter(xs, ys, c=color, marker=marker, label=label, alpha=0.7, s=20)
+    ax.set_title(f"{product} Trade Prices")
+    ax.set_ylabel("Price")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+axes2[-1].set_xlabel("Timestamp")
+fig2.suptitle(f"Trade Prices — Submission {subnum}", fontsize=14)
+fig2.tight_layout()
+
+out2 = d / f"{subnum}_prices.png"
+fig2.savefig(out2, dpi=150)
+print(f"saved {out2}")
 plt.show()

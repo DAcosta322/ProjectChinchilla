@@ -80,11 +80,12 @@ class CommodityTrader(ProductTrader):
                     orders.append(Order(self.name, bid_price, -qty))
                     sell_capacity -= qty
 
+        EMERALDS_DIFF=7
         # Post resting orders to capture spread on remaining capacity
         if buy_capacity > 0:
-            orders.append(Order(self.name, self.fair_value - 1, buy_capacity))
+            orders.append(Order(self.name, self.fair_value - EMERALDS_DIFF, buy_capacity))
         if sell_capacity > 0:
-            orders.append(Order(self.name, self.fair_value + 1, -sell_capacity))
+            orders.append(Order(self.name, self.fair_value + EMERALDS_DIFF, -sell_capacity))
 
         return orders
 
@@ -102,7 +103,7 @@ class StockTrader(ProductTrader):
     capturing mean-reversion during range-bound periods.
     """
 
-    FAST_WINDOW = 30
+    FAST_WINDOW = 8
     SLOW_WINDOW = 500
     SIGNAL_MULT = 0.5
 
