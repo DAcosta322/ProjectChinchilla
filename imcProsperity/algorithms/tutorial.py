@@ -7,10 +7,14 @@ import math
 
 COMMODITY_SYMBOL = "EMERALDS"
 STOCK_SYMBOL = "TOMATOES"
+OPTION_SYMBOL = ""
+ETF_SYMBOL = ""
 
 POS_LIMITS = {
     COMMODITY_SYMBOL: 80,
-    STOCK_SYMBOL: 80
+    STOCK_SYMBOL: 80,
+    OPTION_SYMBOL: 0,
+    ETF_SYMBOL: 0
 }
 
 ### General ### General ### General ### General ### General ###
