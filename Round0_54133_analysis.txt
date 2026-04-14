@@ -1,0 +1,46 @@
+Analysis of Submission 54133 — TOMATOES Shorting Failure
+The Price Drop (ts 0–50000)
+The TOMATOES mid price dropped from ~5006 (ts=0) down to ~4982 (ts=45000) 
+— a decline of about 24 points. This is the opportunity you noticed.
+
+What Went Wrong: The Algo Went Long Instead of Short
+Looking at the position reconstruction, the algo briefly went short early on 
+(reaching -10 at ts=48700), but then reversed into a massive long — buying 11 at ts=51500, 
+and continuing to pile on buys until it hit +80 (the position limit!) by ts=87100/108300.
+
+The root cause is the slow MA (SLOW_WINDOW = 500). Here's the problem:
+
+During the first 500 ticks (~50,000 timestamps), compute_fair_value just returns 
+the current mid price (line 127: return mid). There's no momentum signal 
+— the algo is essentially blind to the trend during the entire warm-up period.
+
+Once the slow MA kicks in (~ts 50000+), it's lagging badly. The slow MA is an average 
+of the last 500 mid prices, which includes the higher prices from early on. 
+So the slow MA sits above the current price. The fast MA (8 ticks) tracks current prices more closely. 
+This means fast_ma - slow_ma is negative — the signal says "momentum is down." 
+But the fair value formula is slow_ma + signal * 0.5, which pulls fair value down even further below the market. 
+This makes the algo think everything at the current ask price is expensive, so it won't sell/short.
+
+The resting orders compound the problem. 
+The algo posts buy orders at fair_value - 2 and sell orders at fair_value + 2. 
+Since the computed fair value is dragged below the market by the lagging slow MA + negative signal, 
+the buy orders are close to the market (getting filled constantly), 
+while the sell orders sit too far below the actual market to attract any counterparty.
+
+The Net Effect
+ts 0–18800: Small short (-9 max) during the warm-up period (using raw mid as fair value — correct behavior by accident)
+ts 24600–50000: Starts flipping between short and long as mid price fluctuates
+ts 51500 onward: The slow MA activates with a stale high average, fair value gets distorted downward, 
+and the algo accumulates a huge long position (up to +80) during the drop — the exact opposite of what you wanted
+The PNL story confirms this
+The TOMATOES PNL goes negative around ts=89000–93600 (dropping to about -250), 
+exactly when the algo is sitting at position +70 while prices bottom out. It recovers only because prices eventually stabilize/bounce.
+
+Summary
+The dual-MA strategy cannot short a downtrend because:
+
+The 500-tick warm-up period means no signal during the initial drop
+Once active, the lagging slow MA creates a fair value below the market, causing the algo to buy (not sell)
+The position quickly maxes out long (+80), trapping the algo on the wrong side
+Want to discuss fixes — like shortening the warm-up, using a different signal for trend-following, 
+or adding a dedicated shorting mode when momentum is clearly negative?

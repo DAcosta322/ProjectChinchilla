@@ -27,8 +27,8 @@ class ConversionObservation:
         self.transportFees = transportFees
         self.exportTariff = exportTariff
         self.importTariff = importTariff
-        self.sugarPrice = sugarPrice # type: ignore
-        self.sunlightIndex = sunlightIndex # type: ignore
+        self.sugarPrice = sugarPrice
+        self.sunlightIndex = sunlightIndex
         
 
 class Observation:
@@ -38,7 +38,7 @@ class Observation:
         self.conversionObservations = conversionObservations
         
     def __str__(self) -> str:
-        return "(plainValueObservations: " + jsonpickle.encode(self.plainValueObservations) + ", conversionObservations: " + jsonpickle.encode(self.conversionObservations) + ")" # type: ignore
+        return "(plainValueObservations: " + jsonpickle.encode(self.plainValueObservations) + ", conversionObservations: " + jsonpickle.encode(self.conversionObservations) + ")"
      
 
 class Order:
@@ -64,7 +64,7 @@ class OrderDepth:
 
 class Trade:
 
-    def __init__(self, symbol: Symbol, price: int, quantity: int, buyer: UserId=None, seller: UserId=None, timestamp: int=0) -> None: # type: ignore
+    def __init__(self, symbol: Symbol, price: int, quantity: int, buyer: UserId=None, seller: UserId=None, timestamp: int=0) -> None:
         self.symbol = symbol
         self.price: int = price
         self.quantity: int = quantity
