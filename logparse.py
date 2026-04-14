@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 subnum = input("Subnum:")
 
-dd = Path(__file__).parent / "Dump" / subnum
+dd = Path(__file__).parent / "dump" / subnum
 jj = subnum + ".json"
 ll = subnum + ".log"
 j = json.loads((dd / jj).read_text())
