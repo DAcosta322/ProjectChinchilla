@@ -63,61 +63,6 @@ def run_with_params(algo_name: str, param_overrides: dict) -> Dict[str, float]:
     }
 
 
-def sweep_short_warmup_ma():
-    print("=" * 70)
-    print("SWEEP: short_warmup_ma")
-    print("=" * 70)
-
-    param_grid = {
-        "FAST_WINDOW": [3, 5, 8, 12],
-        "SLOW_WINDOW": [20, 35, 50, 80, 120],
-        "SIGNAL_MULT": [0.5, 1.0, 1.5, 2.0],
-        "SPREAD": [1, 2, 3],
-        "CLEAR_THRESHOLD": [50, 65, 80],
-    }
-
-    keys = list(param_grid.keys())
-    combos = list(itertools.product(*[param_grid[k] for k in keys]))
-    print(f"Total combinations: {len(combos)}")
-    print()
-
-    results = []
-    for i, values in enumerate(combos):
-        params = dict(zip(keys, values))
-
-        # Skip invalid combos
-        if params["FAST_WINDOW"] >= params["SLOW_WINDOW"]:
-            continue
-
-        pnl = run_with_params("short_warmup_ma", params)
-        results.append((pnl, params))
-
-        if (i + 1) % 50 == 0:
-            print(f"  ... {i + 1}/{len(combos)} done")
-
-    # Sort by total PnL
-    results.sort(key=lambda x: x[0]["total"], reverse=True)
-
-    print()
-    print("TOP 15 by TOTAL PnL (days -2 + -1):")
-    print("-" * 90)
-    print(f"{'Rank':>4}  {'Total':>10}  {'Tomato':>10}  {'Emerald':>10}  Parameters")
-    print("-" * 90)
-    for rank, (pnl, params) in enumerate(results[:15], 1):
-        param_str = "  ".join(f"{k}={v}" for k, v in params.items())
-        print(f"{rank:>4}  {pnl['total']:>10.2f}  {pnl['tomato']:>10.2f}  {pnl['emerald']:>10.2f}  {param_str}")
-
-    print()
-    print("TOP 15 by TOMATO PnL only:")
-    print("-" * 90)
-    results_tom = sorted(results, key=lambda x: x[0]["tomato"], reverse=True)
-    for rank, (pnl, params) in enumerate(results_tom[:15], 1):
-        param_str = "  ".join(f"{k}={v}" for k, v in params.items())
-        print(f"{rank:>4}  {pnl['total']:>10.2f}  {pnl['tomato']:>10.2f}  {pnl['emerald']:>10.2f}  {param_str}")
-
-    return results
-
-
 def sweep_ema_trend():
     print("=" * 70)
     print("SWEEP: ema_trend")
@@ -298,11 +243,106 @@ def sweep_osmium():
     return results
 
 
+def run_heatmap_with_params(param_overrides: dict) -> float:
+    """Load round1_osmium_heatmap, patch module-level constants, run round 1 days."""
+    module = load_algo("round1_osmium_heatmap")
+    for k, v in param_overrides.items():
+        setattr(module, k, v)
+
+    reader = DataReader(DATA_DIR)
+    total_pnl = 0.0
+    for day in DAYS_1:
+        result = run_backtest(module, reader, ROUND_1, day)
+        if result:
+            total_pnl += result["pnl_by_product"].get("ASH_COATED_OSMIUM", 0.0)
+    return total_pnl
+
+
+def sweep_osmium_heatmap():
+    print("=" * 70)
+    print("SWEEP: round1_osmium_heatmap (ASH_COATED_OSMIUM)")
+    print("=" * 70)
+
+    # Phase 1: coarse sweep
+    coarse_grid = {
+        "MA_WINDOW": [5, 10, 20, 40, 80],
+        "HALF_SPREAD": [10, 15, 20, 25, 30],
+    }
+
+    keys = list(coarse_grid.keys())
+    combos = list(itertools.product(*[coarse_grid[k] for k in keys]))
+    print(f"Phase 1 (coarse): {len(combos)} combinations")
+
+    results = []
+    for i, values in enumerate(combos):
+        params = dict(zip(keys, values))
+        pnl = run_heatmap_with_params(params)
+        results.append((pnl, params))
+        if (i + 1) % 10 == 0:
+            best = max(r[0] for r in results)
+            print(f"  ... {i + 1}/{len(combos)} done (best: {best:.2f})")
+
+    results.sort(key=lambda x: x[0], reverse=True)
+    best_params = results[0][1]
+
+    print(f"\nPhase 1 best: PnL={results[0][0]:.2f}")
+    print(f"  {best_params}")
+
+    # Phase 2: fine sweep around best
+    def refine_values(center, candidates):
+        candidates = sorted(set(candidates))
+        idx = min(range(len(candidates)), key=lambda i: abs(candidates[i] - center))
+        lo = max(0, idx - 1)
+        hi = min(len(candidates), idx + 2)
+        return candidates[lo:hi]
+
+    fine_grid = {
+        "MA_WINDOW": refine_values(best_params["MA_WINDOW"],
+                                   [3, 5, 7, 10, 12, 15, 20, 25, 30, 40, 50, 60, 80]),
+        "HALF_SPREAD": refine_values(best_params["HALF_SPREAD"],
+                                     [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 35]),
+    }
+
+    combos2 = list(itertools.product(*[fine_grid[k] for k in keys]))
+    print(f"\nPhase 2 (fine): {len(combos2)} combinations around best")
+    print(f"  Grid: {{{', '.join(f'{k}: {fine_grid[k]}' for k in keys)}}}")
+
+    for i, values in enumerate(combos2):
+        params = dict(zip(keys, values))
+        pnl = run_heatmap_with_params(params)
+        results.append((pnl, params))
+
+    results.sort(key=lambda x: x[0], reverse=True)
+
+    # Deduplicate
+    seen = set()
+    unique = []
+    for pnl, params in results:
+        key = tuple(sorted(params.items()))
+        if key not in seen:
+            seen.add(key)
+            unique.append((pnl, params))
+    results = unique
+
+    print()
+    print("TOP 20 by Osmium PnL (days -2 + -1 + 0):")
+    print("-" * 80)
+    print(f"{'Rank':>4}  {'PnL':>10}  Parameters")
+    print("-" * 80)
+    for rank, (pnl, params) in enumerate(results[:20], 1):
+        param_str = "  ".join(f"{k}={v}" for k, v in params.items())
+        print(f"{rank:>4}  {pnl:>10.2f}  {param_str}")
+
+    return results
+
+
 if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "both"
 
     if target == "osmium":
         sweep_osmium()
+    elif target == "osmium_heatmap":
+        sweep_osmium_heatmap()
     else:
         run_baseline()
 

@@ -59,7 +59,7 @@ class OsmiumTrader(ProductTrader):
     SIGNAL_MULT = 0.65
 
     # --- Risk parameters ---
-    SPREAD = 3
+    SPREAD = 2
     CLEAR_THRESHOLD = 70
     GAMMA = 0.01
 

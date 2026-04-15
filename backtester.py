@@ -163,7 +163,14 @@ class DataReader:
 # Order matching engine
 # ---------------------------------------------------------------------------
 class OrderMatcher:
-    """Matches trader orders against the order book, updates positions and PnL."""
+    """Matches trader orders against the order book and market trades.
+
+    Phase 1: Aggressive fills — trader orders cross the visible book.
+    Phase 2: Passive fills — unfilled resting orders get hit by market
+             trades from the trades CSV.  Visible book volume at the
+             same price acts as "queue ahead"; market trade volume must
+             eat through it before filling our order.
+    """
 
     def __init__(self, position: Dict[str, int], pnl: Dict[str, float]):
         self.position = position
@@ -174,9 +181,13 @@ class OrderMatcher:
         orders: Dict[str, List[Order]],
         order_depths: Dict[str, OrderDepth],
         timestamp: int,
+        market_trades: Optional[Dict[str, List]] = None,
     ) -> List[dict]:
         """Match orders and return list of trade dicts."""
         trades = []
+        if market_trades is None:
+            market_trades = {}
+
         for product, product_orders in orders.items():
             od = order_depths.get(product)
             if od is None:
@@ -186,9 +197,13 @@ class OrderMatcher:
             sell_book = dict(od.sell_orders)  # price -> negative qty
             buy_book = dict(od.buy_orders)    # price -> positive qty
 
+            # Collect unfilled resting orders for phase 2
+            resting_buys = []   # (price, remaining_qty)
+            resting_sells = []  # (price, remaining_qty)
+
             for order in product_orders:
                 if order.quantity > 0:
-                    # BUY order — match against sell book (ascending price)
+                    # ---- Phase 1: BUY — match against sell book ----
                     remaining = order.quantity
                     for price in sorted(sell_book.keys()):
                         if price > order.price or remaining <= 0:
@@ -198,7 +213,6 @@ class OrderMatcher:
                         if fill <= 0:
                             continue
 
-                        # Execute trade
                         self.position[product] = self.position.get(product, 0) + fill
                         self.pnl[product] = self.pnl.get(product, 0.0) - price * fill
                         remaining -= fill
@@ -214,8 +228,11 @@ class OrderMatcher:
                             "quantity": fill,
                         })
 
+                    if remaining > 0:
+                        resting_buys.append((order.price, remaining))
+
                 elif order.quantity < 0:
-                    # SELL order — match against buy book (descending price)
+                    # ---- Phase 1: SELL — match against buy book ----
                     remaining = -order.quantity  # make positive
                     for price in sorted(buy_book.keys(), reverse=True):
                         if price < order.price or remaining <= 0:
@@ -239,6 +256,106 @@ class OrderMatcher:
                             "price": float(price),
                             "quantity": fill,
                         })
+
+                    if remaining > 0:
+                        resting_sells.append((order.price, remaining))
+
+            # ---- Phase 2: Passive fills via market trades ----
+            product_market_trades = market_trades.get(product, [])
+            if not product_market_trades:
+                continue
+
+            # Build pool of market trade volume at each price
+            # (these are trades between other participants)
+            mt_volume_at_price: Dict[float, int] = {}
+            for mt in product_market_trades:
+                px = mt.price if hasattr(mt, 'price') else mt['price']
+                qty = mt.quantity if hasattr(mt, 'quantity') else mt['quantity']
+                mt_volume_at_price[px] = mt_volume_at_price.get(px, 0) + qty
+
+            # Queue ahead: visible book volume at each price that sits
+            # in front of us.  Only applies when our order is at a price
+            # that already exists in the book.  If we created a NEW price
+            # level (e.g. bid1+1), there's zero queue — we ARE the book.
+            orig_buy_book = dict(od.buy_orders)    # original, before consumption
+            orig_sell_book = dict(od.sell_orders)
+
+            # Process resting BUY orders (our bid sits in the book;
+            # a market sell trade at or below our price can fill us)
+            for order_price, remaining in resting_buys:
+                if remaining <= 0:
+                    continue
+                for mt_price in sorted(mt_volume_at_price.keys()):
+                    if mt_price > order_price or remaining <= 0:
+                        break
+                    available = mt_volume_at_price[mt_price]
+                    if available <= 0:
+                        continue
+
+                    # Queue ahead: only applies when the trade is at the
+                    # SAME price as existing book orders (we compete).
+                    # If trade is at a WORSE price than our bid, we would
+                    # have intercepted it — zero queue.
+                    if int(mt_price) == order_price:
+                        queue_ahead = orig_buy_book.get(int(mt_price), 0)
+                    else:
+                        queue_ahead = 0
+                    after_queue = available - queue_ahead
+                    if after_queue <= 0:
+                        continue
+
+                    fill = min(remaining, after_queue)
+                    self.position[product] = self.position.get(product, 0) + fill
+                    self.pnl[product] = self.pnl.get(product, 0.0) - order_price * fill
+                    remaining -= fill
+                    mt_volume_at_price[mt_price] -= fill
+
+                    trades.append({
+                        "timestamp": timestamp,
+                        "buyer": "SUBMISSION",
+                        "seller": "",
+                        "symbol": product,
+                        "currency": CURRENCY,
+                        "price": float(order_price),
+                        "quantity": fill,
+                    })
+
+            # Process resting SELL orders (our ask sits in the book;
+            # a market buy trade at or above our price can fill us)
+            for order_price, remaining in resting_sells:
+                if remaining <= 0:
+                    continue
+                for mt_price in sorted(mt_volume_at_price.keys(), reverse=True):
+                    if mt_price < order_price or remaining <= 0:
+                        break
+                    available = mt_volume_at_price[mt_price]
+                    if available <= 0:
+                        continue
+
+                    # Queue ahead: only when trade is at our exact price
+                    if int(mt_price) == order_price:
+                        queue_ahead = -orig_sell_book.get(int(mt_price), 0)
+                    else:
+                        queue_ahead = 0
+                    after_queue = available - queue_ahead
+                    if after_queue <= 0:
+                        continue
+
+                    fill = min(remaining, after_queue)
+                    self.position[product] = self.position.get(product, 0) - fill
+                    self.pnl[product] = self.pnl.get(product, 0.0) + order_price * fill
+                    remaining -= fill
+                    mt_volume_at_price[mt_price] -= fill
+
+                    trades.append({
+                        "timestamp": timestamp,
+                        "buyer": "",
+                        "seller": "SUBMISSION",
+                        "symbol": product,
+                        "currency": CURRENCY,
+                        "price": float(order_price),
+                        "quantity": fill,
+                    })
 
         return trades
 
@@ -458,8 +575,8 @@ def run_backtest(
             if product not in valid_orders:
                 sandbox_msg += f"Orders for {product} exceeded position limit. "
 
-        # Match orders
-        new_trades = matcher.match(valid_orders, state.order_depths, ts)
+        # Match orders (phase 1: aggressive vs book, phase 2: passive vs market trades)
+        new_trades = matcher.match(valid_orders, state.order_depths, ts, market_trades_at_ts)
         all_trades.extend(new_trades)
 
         # Track all placed orders with fill information

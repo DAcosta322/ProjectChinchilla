@@ -12,14 +12,14 @@ ll = subnum + ".log"
 j = json.loads((dd / jj).read_text())
 log = json.loads((dd / ll).read_text())
 
-print("profit", j["profit"])
+print("PnL", j["profit"])
 print("positions", j["positions"])
 print("activities rows", len(j["activitiesLog"].splitlines()))
 
 # trade history stats
 trade = log["tradeHistory"]
 print("trades", len(trade))
-print("symbols", {s: sum(1 for t in trade if t["symbol"] == s) for s in {"TOMATOES", "EMERALDS"}})
+print("symbols", {s: sum(1 for t in trade if t["symbol"] == s) for s in set(t["symbol"] for t in trade)})
 
 # parse activitiesLog CSV into per-product PNL series
 reader = csv.DictReader(io.StringIO(j["activitiesLog"]), delimiter=";")
@@ -100,7 +100,7 @@ for row_axes, product in zip(axes, products):
                 if max_q == min_q:
                     alphas = [0.7] * len(tqs)
                 else:
-                    alphas = [0.2 + 0.8 * (q - min_q) / (max_q - min_q) for q in tqs]
+                    alphas = [min(1.0, 0.2 + 0.8 * (q - min_q) / (max_q - min_q)) for q in tqs]
                 ax_price.scatter(txs, tys, c=color, marker=marker, label=label, alpha=alphas, s=20)
                 # Annotate each point with its quantity
                 for x, y, q in zip(txs, tys, tqs):
