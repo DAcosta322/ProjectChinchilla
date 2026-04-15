@@ -4,7 +4,9 @@
       "WebSearch",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:github.com)",
-      "Bash(python -c ':*)"
+      "Bash(python -c ':*)",
+      "Bash(python -c ' *)",
+      "Bash(python backtester.py round1_O_R_10501 --round 1)"
     ]
   }
 }
