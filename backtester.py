@@ -7,8 +7,7 @@ Usage:
     python backtester.py <algo_name> [--round ROUND] [--day DAY] [--print-output]
 
 Example:
-    python backtester.py tutorial --round 0 --day -1
-    python backtester.py tutorial --round 0           # runs all days in round 0
+    py ./backtester.py round1_osmium --round 1 2>&1
 """
 
 import argparse
@@ -44,8 +43,8 @@ from datamodel import (
 POSITION_LIMITS = {
     "EMERALDS": 80,
     "TOMATOES": 80,
-    "ASH_COATED_OSMIUM": 50,
-    "INTARIAN_PEPPER_ROOT": 50,
+    "ASH_COATED_OSMIUM": 80,
+    "INTARIAN_PEPPER_ROOT": 80,
 }
 
 CURRENCY = "XIRECS"
