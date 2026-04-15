@@ -58,6 +58,9 @@ class OsmiumTrader(ProductTrader):
     SLOW_WINDOW = 300
     SIGNAL_MULT = 0.65
 
+    # --- Imbalance parameters ---
+    IMB_SHIFT = 5           # FV += IMB_SHIFT * imbalance (positive corr with mid change)
+
     # --- Risk parameters ---
     SPREAD = 3
     CLEAR_THRESHOLD = 45
@@ -80,13 +83,22 @@ class OsmiumTrader(ProductTrader):
             return slow_ma + signal * self.SIGNAL_MULT
         return mid
 
+    def compute_imbalance(self, order_depth: OrderDepth) -> float:
+        bid_vol = sum(order_depth.buy_orders.values())
+        ask_vol = sum(-v for v in order_depth.sell_orders.values())
+        total = bid_vol + ask_vol
+        if total == 0:
+            return 0.0
+        return (bid_vol - ask_vol) / total
+
     def run(self, state: TradingState, price_history: List[float]) -> List[Order]:
         orders: List[Order] = []
         order_depth = self.get_order_depth(state)
         position = self.get_position(state)
 
         ma_fv = self.compute_fair_value(order_depth, price_history)
-        adjusted_fv = ma_fv - self.GAMMA * position
+        imbalance = self.compute_imbalance(order_depth)
+        adjusted_fv = ma_fv + self.IMB_SHIFT * imbalance - self.GAMMA * position
         fv = round(adjusted_fv)
 
         buy_capacity = self.pos_limit - position

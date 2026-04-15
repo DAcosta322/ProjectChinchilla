@@ -24,6 +24,7 @@ print("symbols", {s: sum(1 for t in trade if t["symbol"] == s) for s in {"TOMATO
 # parse activitiesLog CSV into per-product PNL series
 reader = csv.DictReader(io.StringIO(j["activitiesLog"]), delimiter=";")
 pnl = {}  # product -> (timestamps[], pnl[])
+mid = {}  # product -> (timestamps[], mid_price[])
 for row in reader:
     product = row["product"]
     ts = int(row["timestamp"])
@@ -32,26 +33,38 @@ for row in reader:
         pnl[product] = ([], [])
     pnl[product][0].append(ts)
     pnl[product][1].append(y)
+    mp = row.get("mid_price", "")
+    if mp and float(mp) != 0:
+        if product not in mid:
+            mid[product] = ([], [])
+        mid[product][0].append(ts)
+        mid[product][1].append(float(mp))
 
 # parse trade history into buy/sell/self price series per product
-prices = {}  # product -> {"buy": (ts[], px[]), "sell": (ts[], px[]), "self": (ts[], px[])}
+prices = {}  # product -> {"buy": (ts[], px[], qty[]), "sell": ..., "self": ...}
 for t in trade:
     sym = t["symbol"]
     if sym not in prices:
-        prices[sym] = {"buy": ([], []), "sell": ([], []), "self": ([], [])}
+        prices[sym] = {"buy": ([], [], []), "sell": ([], [], []), "self": ([], [], [])}
     ts = t["timestamp"]
     px = t["price"]
+    qty = t["quantity"]
+    if px == 0 or qty == 0:
+        continue
     is_buyer = t["buyer"] == "SUBMISSION"
     is_seller = t["seller"] == "SUBMISSION"
     if is_buyer and is_seller:
         prices[sym]["self"][0].append(ts)
         prices[sym]["self"][1].append(px)
+        prices[sym]["self"][2].append(qty)
     elif is_buyer:
         prices[sym]["buy"][0].append(ts)
         prices[sym]["buy"][1].append(px)
+        prices[sym]["buy"][2].append(qty)
     elif is_seller:
         prices[sym]["sell"][0].append(ts)
         prices[sym]["sell"][1].append(px)
+        prices[sym]["sell"][2].append(qty)
 
 # combined plot: PNL (top) + Trade Prices (bottom) per product, one figure
 products = sorted(pnl.keys())
@@ -71,12 +84,29 @@ for row_axes, product in zip(axes, products):
     ax_pnl.set_xlabel("Timestamp")
     ax_pnl.grid(True, alpha=0.3)
 
-    # Trade prices subplot
+    # Trade prices subplot — mid price curve
+    if product in mid:
+        mxs, mys = mid[product]
+        ax_price.plot(mxs, mys, color="gray", linewidth=0.8, alpha=0.6, label="mid", zorder=1)
+
+    # Trade prices subplot — scatter
     if product in prices:
         for label, color, marker in [("buy", "green", "^"), ("sell", "red", "v"), ("self", "blue", "o")]:
-            txs, tys = prices[product][label]
+            txs, tys, tqs = prices[product][label]
             if txs:
-                ax_price.scatter(txs, tys, c=color, marker=marker, label=label, alpha=0.7, s=20)
+                # Scale alpha by quantity: map [min_qty, max_qty] -> [0.2, 1.0]
+                max_q = max(tqs)
+                min_q = min(tqs)
+                if max_q == min_q:
+                    alphas = [0.7] * len(tqs)
+                else:
+                    alphas = [0.2 + 0.8 * (q - min_q) / (max_q - min_q) for q in tqs]
+                ax_price.scatter(txs, tys, c=color, marker=marker, label=label, alpha=alphas, s=20)
+                # Annotate each point with its quantity
+                for x, y, q in zip(txs, tys, tqs):
+                    ax_price.annotate(str(q), (x, y), textcoords="offset points",
+                                      xytext=(0, 6 if marker == "^" else -10),
+                                      fontsize=6, ha="center", color=color, alpha=0.8)
         ax_price.legend()
     ax_price.set_title(f"{product} Trade Prices")
     ax_price.set_ylabel("Price")
