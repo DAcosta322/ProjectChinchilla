@@ -44,6 +44,8 @@ from datamodel import (
 POSITION_LIMITS = {
     "EMERALDS": 80,
     "TOMATOES": 80,
+    "ASH_COATED_OSMIUM": 50,
+    "INTARIAN_PEPPER_ROOT": 50,
 }
 
 CURRENCY = "XIRECS"
@@ -85,7 +87,7 @@ class DataReader:
         self.data_dir = data_dir
 
     def available_days(self, round_num: int) -> List[int]:
-        round_dir = self.data_dir / f"round{round_num}"
+        round_dir = self.data_dir / f"ROUND_{round_num}"
         days = []
         if round_dir.is_dir():
             for f in round_dir.iterdir():
@@ -98,7 +100,7 @@ class DataReader:
 
     def read_prices(self, round_num: int, day_num: int) -> Dict[int, Dict[str, PriceRow]]:
         """Returns {timestamp: {product: PriceRow}}"""
-        path = self.data_dir / f"round{round_num}" / f"prices_round_{round_num}_day_{day_num}.csv"
+        path = self.data_dir / f"ROUND_{round_num}" / f"prices_round_{round_num}_day_{day_num}.csv"
         result: Dict[int, Dict[str, PriceRow]] = {}
 
         with open(path, "r") as f:
@@ -135,7 +137,7 @@ class DataReader:
 
     def read_trades(self, round_num: int, day_num: int) -> Dict[int, Dict[str, List[MarketTrade]]]:
         """Returns {timestamp: {symbol: [MarketTrade]}}"""
-        path = self.data_dir / f"round{round_num}" / f"trades_round_{round_num}_day_{day_num}.csv"
+        path = self.data_dir / f"ROUND_{round_num}" / f"trades_round_{round_num}_day_{day_num}.csv"
         result: Dict[int, Dict[str, List[MarketTrade]]] = {}
 
         if not path.exists():

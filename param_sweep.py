@@ -1,9 +1,10 @@
-"""Parameter sweep for short_warmup_ma and ema_trend algorithms.
+"""Parameter sweep for trading algorithms.
 
 Usage:
     python param_sweep.py short_warmup_ma
     python param_sweep.py ema_trend
     python param_sweep.py both
+    python param_sweep.py osmium
 """
 
 import sys
@@ -21,6 +22,9 @@ from backtester import DataReader, run_backtest
 DATA_DIR = SCRIPT_DIR / "data"
 ROUND = 0
 DAYS = [-2, -1]
+
+ROUND_1 = 1
+DAYS_1 = [-2, -1, 0]
 
 
 def load_algo(name: str):
@@ -187,14 +191,124 @@ def run_baseline():
     print()
 
 
+def run_osmium_with_params(param_overrides: dict) -> float:
+    """Load round1_osmium, patch OsmiumTrader, run all round 1 days, return osmium PnL."""
+    module = load_algo("round1_osmium")
+    cls = module.OsmiumTrader
+    for k, v in param_overrides.items():
+        setattr(cls, k, v)
+
+    reader = DataReader(DATA_DIR)
+    total_pnl = 0.0
+    for day in DAYS_1:
+        result = run_backtest(module, reader, ROUND_1, day)
+        if result:
+            total_pnl += result["pnl_by_product"].get("ASH_COATED_OSMIUM", 0.0)
+    return total_pnl
+
+
+def sweep_osmium():
+    print("=" * 70)
+    print("SWEEP: round1_osmium (ASH_COATED_OSMIUM)")
+    print("=" * 70)
+
+    # Phase 1: coarse sweep (~65 combos, ~3 min)
+    coarse_grid = {
+        "FAST_WINDOW": [5, 15],
+        "SLOW_WINDOW": [100, 300],
+        "SIGNAL_MULT": [0.0, 0.5, 1.0],
+        "SPREAD": [3, 7],
+        "CLEAR_THRESHOLD": [20, 40],
+        "GAMMA": [0.0, 0.1],
+    }
+
+    keys = list(coarse_grid.keys())
+    combos = list(itertools.product(*[coarse_grid[k] for k in keys]))
+    valid_combos = [c for c in combos if dict(zip(keys, c))["FAST_WINDOW"] < dict(zip(keys, c))["SLOW_WINDOW"]]
+    print(f"Phase 1 (coarse): {len(valid_combos)} combinations")
+
+    results = []
+    for i, values in enumerate(valid_combos):
+        params = dict(zip(keys, values))
+        pnl = run_osmium_with_params(params)
+        results.append((pnl, params))
+        if (i + 1) % 100 == 0:
+            best = max(r[0] for r in results)
+            print(f"  ... {i + 1}/{len(valid_combos)} done (best: {best:.2f})")
+
+    results.sort(key=lambda x: x[0], reverse=True)
+    best_params = results[0][1]
+
+    print(f"\nPhase 1 best: PnL={results[0][0]:.2f}")
+    print(f"  {best_params}")
+
+    # Phase 2: refine the 4 most sensitive params around best (~110 combos, ~5 min)
+    # Fix SLOW_WINDOW and CLEAR_THRESHOLD from phase 1 (less sensitive)
+    def refine_values(center, candidates):
+        """Pick 3 values closest to center from candidates."""
+        candidates = sorted(set(candidates))
+        idx = min(range(len(candidates)), key=lambda i: abs(candidates[i] - center))
+        lo = max(0, idx - 1)
+        hi = min(len(candidates), idx + 2)
+        return candidates[lo:hi]
+
+    fine_grid = {
+        "FAST_WINDOW": refine_values(best_params["FAST_WINDOW"], [3, 5, 8, 10, 12, 15, 20]),
+        "SLOW_WINDOW": [best_params["SLOW_WINDOW"]],  # fixed
+        "SIGNAL_MULT": refine_values(best_params["SIGNAL_MULT"], [0.0, 0.2, 0.35, 0.5, 0.65, 0.8, 1.0, 1.2]),
+        "SPREAD": refine_values(best_params["SPREAD"], [1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        "CLEAR_THRESHOLD": [best_params["CLEAR_THRESHOLD"]],  # fixed
+        "GAMMA": refine_values(best_params["GAMMA"], [0.0, 0.02, 0.05, 0.08, 0.1, 0.15, 0.2]),
+    }
+
+    combos2 = list(itertools.product(*[fine_grid[k] for k in keys]))
+    valid_combos2 = [c for c in combos2 if dict(zip(keys, c))["FAST_WINDOW"] < dict(zip(keys, c))["SLOW_WINDOW"]]
+    print(f"\nPhase 2 (fine): {len(valid_combos2)} combinations around best")
+    print(f"  Grid: {{{', '.join(f'{k}: {fine_grid[k]}' for k in keys)}}}")
+
+    for i, values in enumerate(valid_combos2):
+        params = dict(zip(keys, values))
+        pnl = run_osmium_with_params(params)
+        results.append((pnl, params))
+        if (i + 1) % 100 == 0:
+            best = max(r[0] for r in results)
+            print(f"  ... {i + 1}/{len(valid_combos2)} done (best: {best:.2f})")
+
+    results.sort(key=lambda x: x[0], reverse=True)
+
+    # Deduplicate
+    seen = set()
+    unique = []
+    for pnl, params in results:
+        key = tuple(sorted(params.items()))
+        if key not in seen:
+            seen.add(key)
+            unique.append((pnl, params))
+    results = unique
+
+    print()
+    print("TOP 30 by Osmium PnL (days -2 + -1 + 0):")
+    print("-" * 110)
+    print(f"{'Rank':>4}  {'PnL':>10}  Parameters")
+    print("-" * 110)
+    for rank, (pnl, params) in enumerate(results[:30], 1):
+        param_str = "  ".join(f"{k}={v}" for k, v in params.items())
+        print(f"{rank:>4}  {pnl:>10.2f}  {param_str}")
+
+    return results
+
+
 if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "both"
 
-    run_baseline()
+    if target == "osmium":
+        sweep_osmium()
+    else:
+        run_baseline()
 
-    if target in ("short_warmup_ma", "both"):
-        sweep_short_warmup_ma()
-        print()
+        if target in ("short_warmup_ma", "both"):
+            sweep_short_warmup_ma()
+            print()
 
-    if target in ("ema_trend", "both"):
-        sweep_ema_trend()
+        if target in ("ema_trend", "both"):
+            sweep_ema_trend()
