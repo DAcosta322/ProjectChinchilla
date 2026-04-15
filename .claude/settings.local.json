@@ -6,7 +6,10 @@
       "WebFetch(domain:github.com)",
       "Bash(python -c ':*)",
       "Bash(python -c ' *)",
-      "Bash(python backtester.py round1_O_R_10501 --round 1)"
+      "Bash(python backtester.py round1_O_R_10501 --round 1)",
+      "Bash(ls d:/UW/1B/prosperity_imc/algorithms/round1_O_R*)",
+      "Bash(python backtester.py round1_advanced --round 1)",
+      "Bash(ls d:/UW/1B/prosperity_imc/dump/17*/)"
     ]
   }
 }

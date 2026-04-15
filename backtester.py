@@ -261,45 +261,68 @@ class OrderMatcher:
                         resting_sells.append((order.price, remaining))
 
             # ---- Phase 2: Passive fills via market trades ----
+            #
+            # On the real exchange, our resting orders become part of the
+            # book.  When a bot sends an aggressive order, it matches the
+            # best available price first.  So:
+            #
+            #  - Our resting BUY at price P intercepts any sell that would
+            #    have traded at any price <= P (we're the best bid if P is
+            #    above all existing bids).
+            #  - Our resting SELL at price P intercepts any buy that would
+            #    have traded at any price >= P.
+            #
+            # Queue priority: if our order is at the SAME price as an
+            # existing book level, we sit behind that queue.  If our
+            # order creates a NEW best price, there's no queue — the
+            # aggressive order hits us first.
+
             product_market_trades = market_trades.get(product, [])
             if not product_market_trades:
                 continue
 
-            # Build pool of market trade volume at each price
-            # (these are trades between other participants)
-            mt_volume_at_price: Dict[float, int] = {}
+            # Aggregate market trade volume, split by side.
+            # A trade at bid1 = aggressive SELL (someone sold into the bid).
+            #   -> Our resting BUY above bid1 can intercept this.
+            # A trade at ask1 = aggressive BUY (someone bought from the ask).
+            #   -> Our resting SELL below ask1 can intercept this.
+            orig_buy_book = dict(od.buy_orders)    # pre-consumption snapshot
+            orig_sell_book = dict(od.sell_orders)
+            best_orig_bid = max(orig_buy_book.keys()) if orig_buy_book else None
+            best_orig_ask = min(orig_sell_book.keys()) if orig_sell_book else None
+
+            # Sell-side flow (trades at bid = aggressive sells)
+            mt_sell_volume: Dict[float, int] = {}
+            # Buy-side flow (trades at ask = aggressive buys)
+            mt_buy_volume: Dict[float, int] = {}
             for mt in product_market_trades:
                 px = mt.price if hasattr(mt, 'price') else mt['price']
                 qty = mt.quantity if hasattr(mt, 'quantity') else mt['quantity']
-                mt_volume_at_price[px] = mt_volume_at_price.get(px, 0) + qty
+                if best_orig_bid is not None and px <= best_orig_bid:
+                    mt_sell_volume[px] = mt_sell_volume.get(px, 0) + qty
+                elif best_orig_ask is not None and px >= best_orig_ask:
+                    mt_buy_volume[px] = mt_buy_volume.get(px, 0) + qty
 
-            # Queue ahead: visible book volume at each price that sits
-            # in front of us.  Only applies when our order is at a price
-            # that already exists in the book.  If we created a NEW price
-            # level (e.g. bid1+1), there's zero queue — we ARE the book.
-            orig_buy_book = dict(od.buy_orders)    # original, before consumption
-            orig_sell_book = dict(od.sell_orders)
-
-            # Process resting BUY orders (our bid sits in the book;
-            # a market sell trade at or below our price can fill us)
-            for order_price, remaining in resting_buys:
-                if remaining <= 0:
+            # --- Resting BUY orders vs aggressive sell flow ---
+            # Our bid intercepts sell flow only if our price >= trade price.
+            # If our bid > best_orig_bid, we're new best and skip queue.
+            for order_price, remaining in sorted(resting_buys, key=lambda x: -x[0]):
+                if remaining <= 0 or not mt_sell_volume:
                     continue
-                for mt_price in sorted(mt_volume_at_price.keys()):
+                # Only intercept if our bid is at or above the trade price
+                for mt_price in sorted(mt_sell_volume.keys()):
                     if mt_price > order_price or remaining <= 0:
                         break
-                    available = mt_volume_at_price[mt_price]
+                    available = mt_sell_volume[mt_price]
                     if available <= 0:
                         continue
 
-                    # Queue ahead: only applies when the trade is at the
-                    # SAME price as existing book orders (we compete).
-                    # If trade is at a WORSE price than our bid, we would
-                    # have intercepted it — zero queue.
-                    if int(mt_price) == order_price:
-                        queue_ahead = orig_buy_book.get(int(mt_price), 0)
+                    # Queue: if our bid is at same price as existing book bid
+                    if best_orig_bid is not None and order_price <= best_orig_bid:
+                        queue_ahead = orig_buy_book.get(int(order_price), 0)
                     else:
-                        queue_ahead = 0
+                        queue_ahead = 0  # we created new best bid
+
                     after_queue = available - queue_ahead
                     if after_queue <= 0:
                         continue
@@ -308,7 +331,7 @@ class OrderMatcher:
                     self.position[product] = self.position.get(product, 0) + fill
                     self.pnl[product] = self.pnl.get(product, 0.0) - order_price * fill
                     remaining -= fill
-                    mt_volume_at_price[mt_price] -= fill
+                    mt_sell_volume[mt_price] -= fill
 
                     trades.append({
                         "timestamp": timestamp,
@@ -320,23 +343,22 @@ class OrderMatcher:
                         "quantity": fill,
                     })
 
-            # Process resting SELL orders (our ask sits in the book;
-            # a market buy trade at or above our price can fill us)
-            for order_price, remaining in resting_sells:
-                if remaining <= 0:
+            # --- Resting SELL orders vs aggressive buy flow ---
+            for order_price, remaining in sorted(resting_sells, key=lambda x: x[0]):
+                if remaining <= 0 or not mt_buy_volume:
                     continue
-                for mt_price in sorted(mt_volume_at_price.keys(), reverse=True):
+                for mt_price in sorted(mt_buy_volume.keys(), reverse=True):
                     if mt_price < order_price or remaining <= 0:
                         break
-                    available = mt_volume_at_price[mt_price]
+                    available = mt_buy_volume[mt_price]
                     if available <= 0:
                         continue
 
-                    # Queue ahead: only when trade is at our exact price
-                    if int(mt_price) == order_price:
-                        queue_ahead = -orig_sell_book.get(int(mt_price), 0)
+                    if best_orig_ask is not None and order_price >= best_orig_ask:
+                        queue_ahead = -orig_sell_book.get(int(order_price), 0)
                     else:
-                        queue_ahead = 0
+                        queue_ahead = 0  # we created new best ask
+
                     after_queue = available - queue_ahead
                     if after_queue <= 0:
                         continue
@@ -345,7 +367,7 @@ class OrderMatcher:
                     self.position[product] = self.position.get(product, 0) - fill
                     self.pnl[product] = self.pnl.get(product, 0.0) + order_price * fill
                     remaining -= fill
-                    mt_volume_at_price[mt_price] -= fill
+                    mt_buy_volume[mt_price] -= fill
 
                     trades.append({
                         "timestamp": timestamp,
