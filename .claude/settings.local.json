@@ -18,7 +18,12 @@
       "Bash(python backtester.py sub_172012 --round 1 --day -2)",
       "Bash(python backtester.py sub_172012 --round 1 --day -1)",
       "Bash(python backtester.py sub_172012 --round 1 --day 0)",
-      "Bash(python backtester.py sub_172012 --round 1 --day 99)"
+      "Bash(python backtester.py sub_172012 --round 1 --day 99)",
+      "Bash(ls d:/UW/1B/prosperity_imc/dump/22*/)",
+      "Bash(python3 -c ' *)",
+      "Bash(where python *)",
+      "Bash(python compare_dummy_vs_best.py)",
+      "Bash(python backtester.py sub_wide_take --round 1)"
     ]
   }
 }

@@ -97,14 +97,14 @@ class Trader:
 
         if od.sell_orders:
             for price in sorted(od.sell_orders.keys()):
-                if price < fv + buy_edge and buy_cap > 0:
+                if price <= fv + buy_edge and buy_cap > 0:
                     qty = min(-od.sell_orders[price], buy_cap)
                     orders.append(Order(P.SYMBOL, price, qty))
                     buy_cap -= qty
 
         if od.buy_orders:
             for price in sorted(od.buy_orders.keys(), reverse=True):
-                if price > fv - sell_edge and sell_cap > 0:
+                if price >= fv - sell_edge and sell_cap > 0:
                     qty = min(od.buy_orders[price], sell_cap)
                     orders.append(Order(P.SYMBOL, price, -qty))
                     sell_cap -= qty

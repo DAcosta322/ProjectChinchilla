@@ -24,7 +24,7 @@ class PepperParams:
     POS_LIMIT = 80
     BUY_LIMIT = 12008         # buy everything at or below this price
     MA_WINDOW = 50            # for trend detection after accumulation
-    HALF_SPREAD = 10           # market-making spread when trend reverses
+    HALF_SPREAD = 7           # market-making spread when trend reverses
 
 
 # =====================================================================
@@ -111,17 +111,17 @@ class Trader:
 
         # Phase 2: Post resting orders to capture bot flow
         if best_bid is not None and best_ask is not None:
-            our_bid = best_bid + 1
-            our_ask = best_ask - 1
+            our_bid = best_bid - 2
+            our_ask = best_ask + 2
             if our_bid >= our_ask:
                 our_bid = best_bid
                 our_ask = best_ask
         elif best_bid is not None:
-            our_bid = best_bid + 1
+            our_bid = best_bid - 2
             our_ask = fv + P.HALF_SPREAD
         elif best_ask is not None:
             our_bid = fv - P.HALF_SPREAD
-            our_ask = best_ask - 1
+            our_ask = best_ask + 2
         else:
             our_bid = fv - P.HALF_SPREAD
             our_ask = fv + P.HALF_SPREAD
