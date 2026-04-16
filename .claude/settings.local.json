@@ -9,7 +9,16 @@
       "Bash(python backtester.py round1_O_R_10501 --round 1)",
       "Bash(ls d:/UW/1B/prosperity_imc/algorithms/round1_O_R*)",
       "Bash(python backtester.py round1_advanced --round 1)",
-      "Bash(ls d:/UW/1B/prosperity_imc/dump/17*/)"
+      "Bash(ls d:/UW/1B/prosperity_imc/dump/17*/)",
+      "Bash(python backtester.py sub_171613 --round 1 --day 0)",
+      "Bash(ls d:/UW/1B/prosperity_imc/algorithms/sub_17*)",
+      "Bash(cp dump/171613/171613.py algorithms/sub_171613.py)",
+      "Bash(cp dump/172556/172556.py algorithms/sub_172556.py)",
+      "Bash(python backtester.py sub_172012 --round 1)",
+      "Bash(python backtester.py sub_172012 --round 1 --day -2)",
+      "Bash(python backtester.py sub_172012 --round 1 --day -1)",
+      "Bash(python backtester.py sub_172012 --round 1 --day 0)",
+      "Bash(python backtester.py sub_172012 --round 1 --day 99)"
     ]
   }
 }

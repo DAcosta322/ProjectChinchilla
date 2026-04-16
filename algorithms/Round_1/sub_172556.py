@@ -16,8 +16,6 @@ class OsmiumParams:
     ANCHOR = 10000
     ANCHOR_WEIGHT = 0.15      # blend MA with anchor for mean-reversion pull
     HALF_SPREAD = 8           # fallback when book is one-sided
-    NARROW_SPREAD = 13        # threshold for "narrow spread" detection
-    NARROW_EDGE = 1           # extra FV tolerance on narrow-spread ticks
 
 class PepperParams:
     SYMBOL = "INTARIAN_PEPPER_ROOT"
@@ -25,6 +23,8 @@ class PepperParams:
     BUY_LIMIT = 12008         # buy everything at or below this price
     MA_WINDOW = 50            # for trend detection after accumulation
     HALF_SPREAD = 7           # market-making spread when trend reverses
+    IMB_MIN_POS = 77          # sell down to this on negative imbalance
+    IMB_MAX_SPREAD = 8        # only trade imbalance on narrow-spread ticks
 
 
 # =====================================================================
@@ -81,35 +81,21 @@ class Trader:
         sell_cap = P.POS_LIMIT + pos
 
         # Phase 1: Take mispriced orders
-        # On narrow-spread ticks, widen the taking threshold on the
-        # imbalance-confirmed side only (positive imb -> buy wider,
-        # negative imb -> sell wider). This avoids round-trip churn.
-        spread = (best_ask - best_bid) if (best_bid is not None and best_ask is not None) else 99
-        buy_edge = 0
-        sell_edge = 0
-        if spread <= P.NARROW_SPREAD and od.buy_orders and od.sell_orders:
-            bv = sum(od.buy_orders.values())
-            av = sum(-v for v in od.sell_orders.values())
-            if bv > av:
-                buy_edge = P.NARROW_EDGE   # more bids -> price going up -> buy wider
-            elif av > bv:
-                sell_edge = P.NARROW_EDGE  # more asks -> price going down -> sell wider
-
         if od.sell_orders:
             for price in sorted(od.sell_orders.keys()):
-                if price < fv + buy_edge and buy_cap > 0:
+                if price < fv and buy_cap > 0:
                     qty = min(-od.sell_orders[price], buy_cap)
                     orders.append(Order(P.SYMBOL, price, qty))
                     buy_cap -= qty
 
         if od.buy_orders:
             for price in sorted(od.buy_orders.keys(), reverse=True):
-                if price > fv - sell_edge and sell_cap > 0:
+                if price > fv and sell_cap > 0:
                     qty = min(od.buy_orders[price], sell_cap)
                     orders.append(Order(P.SYMBOL, price, -qty))
                     sell_cap -= qty
 
-        # Phase 2: Post resting orders to capture bot flow
+        # Phase 2: Post just inside bot walls
         if best_bid is not None and best_ask is not None:
             our_bid = best_bid + 1
             our_ask = best_ask - 1
@@ -125,11 +111,6 @@ class Trader:
         else:
             our_bid = fv - P.HALF_SPREAD
             our_ask = fv + P.HALF_SPREAD
-
-        # Clamp resting orders: bid at most fv-1, ask at least fv.
-        # Prevents losing resting fills at wrong-side prices.
-        our_bid = min(our_bid, fv - 1)
-        our_ask = max(our_ask, fv)
 
         if buy_cap > 0:
             orders.append(Order(P.SYMBOL, our_bid, buy_cap))
@@ -181,7 +162,32 @@ class Trader:
         trending_up = mid >= fv
 
         if trending_up:
-            # Still trending up — hold position, buy any dips below fv
+            sell_cap = P.POS_LIMIT + pos
+
+            # Imbalance trading on narrow-spread ticks while holding
+            if od.buy_orders and od.sell_orders:
+                best_bid = max(od.buy_orders.keys())
+                best_ask = min(od.sell_orders.keys())
+                spread = best_ask - best_bid
+                bv = sum(od.buy_orders.values())
+                av = sum(-v for v in od.sell_orders.values())
+                imb = bv - av
+
+                if spread <= P.IMB_MAX_SPREAD:
+                    if imb < 0 and pos > P.IMB_MIN_POS:
+                        # Price going down — sell a few units at bid
+                        sell_qty = min(pos - P.IMB_MIN_POS, sell_cap)
+                        if sell_qty > 0:
+                            orders.append(Order(P.SYMBOL, best_bid, -sell_qty))
+                            sell_cap -= sell_qty
+                    elif imb > 0 and buy_cap > 0:
+                        # Price going up — buy back at ask
+                        buy_qty = min(buy_cap, P.POS_LIMIT - P.IMB_MIN_POS)
+                        if buy_qty > 0:
+                            orders.append(Order(P.SYMBOL, best_ask, buy_qty))
+                            buy_cap -= buy_qty
+
+            # Buy any remaining dips below fv
             if buy_cap > 0:
                 if od.sell_orders:
                     for price in sorted(od.sell_orders.keys()):
