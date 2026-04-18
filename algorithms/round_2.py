@@ -18,13 +18,16 @@ class OsmiumParams:
     HALF_SPREAD = 8           # fallback when book is one-sided
     NARROW_SPREAD = 13        # threshold for "narrow spread" detection
     NARROW_EDGE = 1           # extra FV tolerance on narrow-spread ticks
+    # Inventory skew: shift effective fv by INV_SKEW * (pos / POS_LIMIT).
+    # Higher -> more aggressive flattening. At INV_SKEW=3, fv moves up to
+    # 3 ticks against the inventory side, biasing takes and rests.
+    INV_SKEW = 3
 
 class PepperParams:
     SYMBOL = "INTARIAN_PEPPER_ROOT"
     POS_LIMIT = 80
-    BUY_LIMIT = 12008         # buy everything at or below this price
-    MA_WINDOW = 50            # for trend detection after accumulation
-    HALF_SPREAD = 10           # market-making spread when trend reverses
+    # Pepper is monotone increasing ~1pt/tick. starts at 13000 on day 2.
+    BUY_LIMIT = 13010
 
 
 # =====================================================================
@@ -35,7 +38,6 @@ class Trader:
 
     def run(self, state: TradingState):
         result = {}
-
         prices = []
         pep_prices = []
         if state.traderData:
@@ -77,6 +79,10 @@ class Trader:
         ma_fv = sum(prices) / len(prices)
         fv = round(ma_fv * (1 - P.ANCHOR_WEIGHT) + P.ANCHOR * P.ANCHOR_WEIGHT)
 
+        # Inventory-skewed fair value: when long, shift fv down so we take
+        # fewer buys, take more sells, and rest quotes bias toward flattening.
+        fv_eff = fv - round(P.INV_SKEW * pos / P.POS_LIMIT)
+
         buy_cap = P.POS_LIMIT - pos
         sell_cap = P.POS_LIMIT + pos
 
@@ -97,14 +103,14 @@ class Trader:
 
         if od.sell_orders:
             for price in sorted(od.sell_orders.keys()):
-                if price < fv + buy_edge and buy_cap > 0:
+                if price < fv_eff + buy_edge and buy_cap > 0:
                     qty = min(-od.sell_orders[price], buy_cap)
                     orders.append(Order(P.SYMBOL, price, qty))
                     buy_cap -= qty
 
         if od.buy_orders:
             for price in sorted(od.buy_orders.keys(), reverse=True):
-                if price > fv - sell_edge and sell_cap > 0:
+                if price > fv_eff - sell_edge and sell_cap > 0:
                     qty = min(od.buy_orders[price], sell_cap)
                     orders.append(Order(P.SYMBOL, price, -qty))
                     sell_cap -= qty
@@ -126,10 +132,11 @@ class Trader:
             our_bid = fv - P.HALF_SPREAD
             our_ask = fv + P.HALF_SPREAD
 
-        # Clamp resting orders: bid at most fv-1, ask at least fv.
-        # Prevents losing resting fills at wrong-side prices.
-        our_bid = min(our_bid, fv - 1)
-        our_ask = max(our_ask, fv)
+        # Clamp resting orders around inventory-skewed fv: when long, fv_eff
+        # is lower, so both clamps shift down -> cheaper ask, tighter bid,
+        # biasing fills toward flattening.
+        our_bid = min(our_bid, fv_eff - 1)
+        our_ask = max(our_ask, fv_eff)
 
         if buy_cap > 0:
             orders.append(Order(P.SYMBOL, our_bid, buy_cap))
@@ -138,9 +145,7 @@ class Trader:
 
         return orders
 
-# ------------------------------------------------------------------
-    # PEPPER
-    # ------------------------------------------------------------------
+    # ---------------------------PEPPER---------------------------------
     def _trade_pepper(self, state: TradingState) -> List[Order]:
         P = PepperParams
         orders: List[Order] = []
