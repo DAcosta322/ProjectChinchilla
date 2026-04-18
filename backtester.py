@@ -163,18 +163,65 @@ class DataReader:
 # Order matching engine
 # ---------------------------------------------------------------------------
 class OrderMatcher:
-    """Matches trader orders against the order book and market trades.
+    """Matches trader orders per IMC Prosperity market mechanics.
 
-    Phase 1: Aggressive fills — trader orders cross the visible book.
-    Phase 2: Passive fills — unfilled resting orders get hit by market
-             trades from the trades CSV.  Visible book volume at the
-             same price acts as "queue ahead"; market trade volume must
-             eat through it before filling our order.
+    Phase 1 — Aggressive fills (immediate on submission):
+        Per Instructions.txt: "the algorithms' order will be (partially)
+        executed right away" against the visible book. Our buy order at
+        price P matches sell quotes at <= P; sell at P matches buys at >= P.
+
+    Phase 2 — Reactive passive fills:
+        Per Instructions.txt: "the remaining order quantity will be visible
+        for the bots in the market, and it might be that one of them sees it
+        as a good trading opportunity and will trade against it."
+
+        We treat every historical market trade as evidence of a bot with
+        directional appetite. Each trade is classified as:
+            aggressive BUY  if price >  mid (bot was buying from the ask side)
+            aggressive SELL if price <  mid (bot was selling into the bid)
+            at-mid          — split by book imbalance (thinner side = aggressor)
+
+        Reactive rule: a bot that historically traded at price Q will
+        prefer any player quote that is strictly better.
+            - Our resting SELL at price P intercepts aggressive BUY flow at
+              any Q >= P  (we're equal-or-cheaper, they prefer us).
+            - Our resting BUY at price P intercepts aggressive SELL flow at
+              any Q <= P  (we bid equal-or-higher, they prefer us).
+
+        Queue priority (QUEUE_FACTOR, default 0.5):
+            - If our price strictly betters the book, no queue ahead.
+            - If our price equals an existing level, effective queue is
+              existing level volume * QUEUE_FACTOR (blended FIFO).
+
+    The old implementation dropped every trade strictly between bid/ask
+    (only counted trades AT bid1 or AT ask1) and used QUEUE_FACTOR=1.0.
+    That made resting-order strategies systematically under-fill in
+    backtest vs live — see submission 298604 for the divergence.
     """
+
+    QUEUE_FACTOR = 0.5  # 1.0 = strict FIFO behind full level; 0 = no queue
 
     def __init__(self, position: Dict[str, int], pnl: Dict[str, float]):
         self.position = position
         self.pnl = pnl
+
+    def _record_buy(self, trades, product, ts, price, fill):
+        self.position[product] = self.position.get(product, 0) + fill
+        self.pnl[product] = self.pnl.get(product, 0.0) - float(price) * fill
+        trades.append({
+            "timestamp": ts, "buyer": "SUBMISSION", "seller": "",
+            "symbol": product, "currency": CURRENCY,
+            "price": float(price), "quantity": fill,
+        })
+
+    def _record_sell(self, trades, product, ts, price, fill):
+        self.position[product] = self.position.get(product, 0) - fill
+        self.pnl[product] = self.pnl.get(product, 0.0) + float(price) * fill
+        trades.append({
+            "timestamp": ts, "buyer": "", "seller": "SUBMISSION",
+            "symbol": product, "currency": CURRENCY,
+            "price": float(price), "quantity": fill,
+        })
 
     def match(
         self,
@@ -183,8 +230,7 @@ class OrderMatcher:
         timestamp: int,
         market_trades: Optional[Dict[str, List]] = None,
     ) -> List[dict]:
-        """Match orders and return list of trade dicts."""
-        trades = []
+        trades: List[dict] = []
         if market_trades is None:
             market_trades = {}
 
@@ -193,47 +239,37 @@ class OrderMatcher:
             if od is None:
                 continue
 
-            # Work on a copy so we can consume liquidity
-            sell_book = dict(od.sell_orders)  # price -> negative qty
-            buy_book = dict(od.buy_orders)    # price -> positive qty
+            # Snapshots for Phase 2 classification (before Phase 1 consumes)
+            orig_buy_book = dict(od.buy_orders)
+            orig_sell_book = dict(od.sell_orders)
+            best_orig_bid = max(orig_buy_book.keys()) if orig_buy_book else None
+            best_orig_ask = min(orig_sell_book.keys()) if orig_sell_book else None
 
-            # Collect unfilled resting orders for phase 2
-            resting_buys = []   # (price, remaining_qty)
-            resting_sells = []  # (price, remaining_qty)
+            # ---- Phase 1: aggressive matching ----
+            sell_book = dict(orig_sell_book)  # price -> negative qty
+            buy_book = dict(orig_buy_book)    # price -> positive qty
+            # Aggregate same-price-side resting remainders by price
+            resting_buys: Dict[int, int] = {}
+            resting_sells: Dict[int, int] = {}
 
             for order in product_orders:
                 if order.quantity > 0:
-                    # ---- Phase 1: BUY — match against sell book ----
                     remaining = order.quantity
                     for price in sorted(sell_book.keys()):
                         if price > order.price or remaining <= 0:
                             break
-                        available = -sell_book[price]  # make positive
+                        available = -sell_book[price]
                         fill = min(remaining, available)
                         if fill <= 0:
                             continue
-
-                        self.position[product] = self.position.get(product, 0) + fill
-                        self.pnl[product] = self.pnl.get(product, 0.0) - price * fill
+                        self._record_buy(trades, product, timestamp, price, fill)
                         remaining -= fill
-                        sell_book[price] += fill  # less negative
-
-                        trades.append({
-                            "timestamp": timestamp,
-                            "buyer": "SUBMISSION",
-                            "seller": "",
-                            "symbol": product,
-                            "currency": CURRENCY,
-                            "price": float(price),
-                            "quantity": fill,
-                        })
-
+                        sell_book[price] += fill
                     if remaining > 0:
-                        resting_buys.append((order.price, remaining))
+                        resting_buys[order.price] = resting_buys.get(order.price, 0) + remaining
 
                 elif order.quantity < 0:
-                    # ---- Phase 1: SELL — match against buy book ----
-                    remaining = -order.quantity  # make positive
+                    remaining = -order.quantity
                     for price in sorted(buy_book.keys(), reverse=True):
                         if price < order.price or remaining <= 0:
                             break
@@ -241,143 +277,108 @@ class OrderMatcher:
                         fill = min(remaining, available)
                         if fill <= 0:
                             continue
-
-                        self.position[product] = self.position.get(product, 0) - fill
-                        self.pnl[product] = self.pnl.get(product, 0.0) + price * fill
+                        self._record_sell(trades, product, timestamp, price, fill)
                         remaining -= fill
                         buy_book[price] -= fill
-
-                        trades.append({
-                            "timestamp": timestamp,
-                            "buyer": "",
-                            "seller": "SUBMISSION",
-                            "symbol": product,
-                            "currency": CURRENCY,
-                            "price": float(price),
-                            "quantity": fill,
-                        })
-
                     if remaining > 0:
-                        resting_sells.append((order.price, remaining))
+                        resting_sells[order.price] = resting_sells.get(order.price, 0) + remaining
 
-            # ---- Phase 2: Passive fills via market trades ----
-            #
-            # On the real exchange, our resting orders become part of the
-            # book.  When a bot sends an aggressive order, it matches the
-            # best available price first.  So:
-            #
-            #  - Our resting BUY at price P intercepts any sell that would
-            #    have traded at any price <= P (we're the best bid if P is
-            #    above all existing bids).
-            #  - Our resting SELL at price P intercepts any buy that would
-            #    have traded at any price >= P.
-            #
-            # Queue priority: if our order is at the SAME price as an
-            # existing book level, we sit behind that queue.  If our
-            # order creates a NEW best price, there's no queue — the
-            # aggressive order hits us first.
-
-            product_market_trades = market_trades.get(product, [])
-            if not product_market_trades:
+            # ---- Phase 2: reactive passive fills ----
+            product_mt = market_trades.get(product, [])
+            if not product_mt or (not resting_buys and not resting_sells):
                 continue
 
-            # Aggregate market trade volume, split by side.
-            # A trade at bid1 = aggressive SELL (someone sold into the bid).
-            #   -> Our resting BUY above bid1 can intercept this.
-            # A trade at ask1 = aggressive BUY (someone bought from the ask).
-            #   -> Our resting SELL below ask1 can intercept this.
-            orig_buy_book = dict(od.buy_orders)    # pre-consumption snapshot
-            orig_sell_book = dict(od.sell_orders)
-            best_orig_bid = max(orig_buy_book.keys()) if orig_buy_book else None
-            best_orig_ask = min(orig_sell_book.keys()) if orig_sell_book else None
+            # Determine reference mid for trade-side classification
+            if best_orig_bid is not None and best_orig_ask is not None:
+                mid = (best_orig_bid + best_orig_ask) / 2.0
+                # At-mid tiebreak: thinner side = aggressor side
+                bid_top_vol = orig_buy_book.get(best_orig_bid, 0)
+                ask_top_vol = -orig_sell_book.get(best_orig_ask, 0)
+                at_mid_is_buy = ask_top_vol < bid_top_vol  # fewer asks -> buyers are aggressing up
+            elif best_orig_bid is not None:
+                mid = best_orig_bid; at_mid_is_buy = False
+            elif best_orig_ask is not None:
+                mid = best_orig_ask; at_mid_is_buy = True
+            else:
+                continue
 
-            # Sell-side flow (trades at bid = aggressive sells)
-            mt_sell_volume: Dict[float, int] = {}
-            # Buy-side flow (trades at ask = aggressive buys)
-            mt_buy_volume: Dict[float, int] = {}
-            for mt in product_market_trades:
-                px = mt.price if hasattr(mt, 'price') else mt['price']
-                qty = mt.quantity if hasattr(mt, 'quantity') else mt['quantity']
-                if best_orig_bid is not None and px <= best_orig_bid:
-                    mt_sell_volume[px] = mt_sell_volume.get(px, 0) + qty
-                elif best_orig_ask is not None and px >= best_orig_ask:
-                    mt_buy_volume[px] = mt_buy_volume.get(px, 0) + qty
-
-            # --- Resting BUY orders vs aggressive sell flow ---
-            # Our bid intercepts sell flow only if our price >= trade price.
-            # If our bid > best_orig_bid, we're new best and skip queue.
-            for order_price, remaining in sorted(resting_buys, key=lambda x: -x[0]):
-                if remaining <= 0 or not mt_sell_volume:
+            mt_buy_flow: Dict[float, int] = {}
+            mt_sell_flow: Dict[float, int] = {}
+            for mt in product_mt:
+                px = float(mt.price if hasattr(mt, 'price') else mt['price'])
+                qty = int(mt.quantity if hasattr(mt, 'quantity') else mt['quantity'])
+                if qty <= 0:
                     continue
-                # Only intercept if our bid is at or above the trade price
-                for mt_price in sorted(mt_sell_volume.keys()):
+                if px > mid:
+                    mt_buy_flow[px] = mt_buy_flow.get(px, 0) + qty
+                elif px < mid:
+                    mt_sell_flow[px] = mt_sell_flow.get(px, 0) + qty
+                else:
+                    if at_mid_is_buy:
+                        mt_buy_flow[px] = mt_buy_flow.get(px, 0) + qty
+                    else:
+                        mt_sell_flow[px] = mt_sell_flow.get(px, 0) + qty
+
+            # --- Resting BUYs vs aggressive sell flow ---
+            # Flow at price Q can hit our bid at P if P >= Q.
+            # Order bids best-first; match each flow bucket ascending by Q.
+            for order_price in sorted(resting_buys.keys(), reverse=True):
+                remaining = resting_buys[order_price]
+                if remaining <= 0:
+                    continue
+                # Queue ahead at same level
+                if best_orig_bid is not None and order_price <= best_orig_bid:
+                    queue_ahead = orig_buy_book.get(int(order_price), 0)
+                else:
+                    queue_ahead = 0  # new best or deep
+                eff_queue = queue_ahead * self.QUEUE_FACTOR
+
+                for mt_price in sorted(mt_sell_flow.keys()):
                     if mt_price > order_price or remaining <= 0:
                         break
-                    available = mt_sell_volume[mt_price]
+                    available = mt_sell_flow[mt_price]
                     if available <= 0:
                         continue
-
-                    # Queue: if our bid is at same price as existing book bid
-                    if best_orig_bid is not None and order_price <= best_orig_bid:
-                        queue_ahead = orig_buy_book.get(int(order_price), 0)
-                    else:
-                        queue_ahead = 0  # we created new best bid
-
-                    after_queue = available - queue_ahead
-                    if after_queue <= 0:
+                    available -= eff_queue
+                    eff_queue = max(0.0, eff_queue - mt_sell_flow[mt_price])  # consume queue first
+                    if available <= 0:
                         continue
-
-                    fill = min(remaining, after_queue)
-                    self.position[product] = self.position.get(product, 0) + fill
-                    self.pnl[product] = self.pnl.get(product, 0.0) - order_price * fill
+                    fill = int(min(remaining, available))
+                    if fill <= 0:
+                        continue
+                    self._record_buy(trades, product, timestamp, order_price, fill)
                     remaining -= fill
-                    mt_sell_volume[mt_price] -= fill
+                    mt_sell_flow[mt_price] -= fill
+                resting_buys[order_price] = remaining
 
-                    trades.append({
-                        "timestamp": timestamp,
-                        "buyer": "SUBMISSION",
-                        "seller": "",
-                        "symbol": product,
-                        "currency": CURRENCY,
-                        "price": float(order_price),
-                        "quantity": fill,
-                    })
-
-            # --- Resting SELL orders vs aggressive buy flow ---
-            for order_price, remaining in sorted(resting_sells, key=lambda x: x[0]):
-                if remaining <= 0 or not mt_buy_volume:
+            # --- Resting SELLs vs aggressive buy flow ---
+            for order_price in sorted(resting_sells.keys()):
+                remaining = resting_sells[order_price]
+                if remaining <= 0:
                     continue
-                for mt_price in sorted(mt_buy_volume.keys(), reverse=True):
+                if best_orig_ask is not None and order_price >= best_orig_ask:
+                    queue_ahead = -orig_sell_book.get(int(order_price), 0)
+                else:
+                    queue_ahead = 0
+                eff_queue = queue_ahead * self.QUEUE_FACTOR
+
+                for mt_price in sorted(mt_buy_flow.keys(), reverse=True):
                     if mt_price < order_price or remaining <= 0:
                         break
-                    available = mt_buy_volume[mt_price]
+                    available = mt_buy_flow[mt_price]
                     if available <= 0:
                         continue
-
-                    if best_orig_ask is not None and order_price >= best_orig_ask:
-                        queue_ahead = -orig_sell_book.get(int(order_price), 0)
-                    else:
-                        queue_ahead = 0  # we created new best ask
-
-                    after_queue = available - queue_ahead
-                    if after_queue <= 0:
+                    available -= eff_queue
+                    eff_queue = max(0.0, eff_queue - mt_buy_flow[mt_price])
+                    if available <= 0:
                         continue
-
-                    fill = min(remaining, after_queue)
-                    self.position[product] = self.position.get(product, 0) - fill
-                    self.pnl[product] = self.pnl.get(product, 0.0) + order_price * fill
+                    fill = int(min(remaining, available))
+                    if fill <= 0:
+                        continue
+                    self._record_sell(trades, product, timestamp, order_price, fill)
                     remaining -= fill
-                    mt_buy_volume[mt_price] -= fill
-
-                    trades.append({
-                        "timestamp": timestamp,
-                        "buyer": "",
-                        "seller": "SUBMISSION",
-                        "symbol": product,
-                        "currency": CURRENCY,
-                        "price": float(order_price),
-                        "quantity": fill,
-                    })
+                    mt_buy_flow[mt_price] -= fill
+                resting_sells[order_price] = remaining
 
         return trades
 

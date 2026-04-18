@@ -12,22 +12,25 @@ import json
 class OsmiumParams:
     SYMBOL = "ASH_COATED_OSMIUM"
     POS_LIMIT = 80
-    MA_WINDOW = 40
+    MA_WINDOW = 30            # swept: +186 vs 40
     ANCHOR = 10000
     ANCHOR_WEIGHT = 0.15      # blend MA with anchor for mean-reversion pull
     HALF_SPREAD = 8           # fallback when book is one-sided
     NARROW_SPREAD = 13        # threshold for "narrow spread" detection
     NARROW_EDGE = 1           # extra FV tolerance on narrow-spread ticks
-    # Inventory skew: shift effective fv by INV_SKEW * (pos / POS_LIMIT).
-    # Higher -> more aggressive flattening. At INV_SKEW=3, fv moves up to
-    # 3 ticks against the inventory side, biasing takes and rests.
-    INV_SKEW = 3
+    INV_SKEW = 2              # flatten bias: shift fv by INV_SKEW*(pos-target)/POS_LIMIT
+    # Mean-reversion bias: target short pos when fv>ANCHOR, long when fv<ANCHOR.
+    # target_pos = -DRIFT_STRENGTH * (fv - ANCHOR), clamped to +-POS_LIMIT.
+    # Swept optimum: 25 (stacks +223 with MA_WINDOW=30).
+    # At drift=+-3.2 this pins target to +-POS_LIMIT.
+    DRIFT_STRENGTH = 25
 
 class PepperParams:
     SYMBOL = "INTARIAN_PEPPER_ROOT"
     POS_LIMIT = 80
     # Pepper is monotone increasing ~1pt/tick. starts at 13000 on day 2.
-    BUY_LIMIT = 13010
+    # 13008 outperformed 13010 empirically (deeper trough at 13010).
+    BUY_LIMIT = 13008
 
 
 # =====================================================================
@@ -38,6 +41,7 @@ class Trader:
 
     def run(self, state: TradingState):
         result = {}
+
         prices = []
         pep_prices = []
         if state.traderData:
@@ -78,10 +82,9 @@ class Trader:
             prices[:] = prices[-P.MA_WINDOW:]
         ma_fv = sum(prices) / len(prices)
         fv = round(ma_fv * (1 - P.ANCHOR_WEIGHT) + P.ANCHOR * P.ANCHOR_WEIGHT)
-
-        # Inventory-skewed fair value: when long, shift fv down so we take
-        # fewer buys, take more sells, and rest quotes bias toward flattening.
-        fv_eff = fv - round(P.INV_SKEW * pos / P.POS_LIMIT)
+        target_pos = max(-P.POS_LIMIT, min(P.POS_LIMIT,
+                         round(-P.DRIFT_STRENGTH * (fv - P.ANCHOR))))
+        fv_eff = fv - round(P.INV_SKEW * (pos - target_pos) / P.POS_LIMIT)
 
         buy_cap = P.POS_LIMIT - pos
         sell_cap = P.POS_LIMIT + pos
@@ -132,9 +135,8 @@ class Trader:
             our_bid = fv - P.HALF_SPREAD
             our_ask = fv + P.HALF_SPREAD
 
-        # Clamp resting orders around inventory-skewed fv: when long, fv_eff
-        # is lower, so both clamps shift down -> cheaper ask, tighter bid,
-        # biasing fills toward flattening.
+        # Clamp resting orders: bid at most fv-1, ask at least fv.
+        # Prevents losing resting fills at wrong-side prices.
         our_bid = min(our_bid, fv_eff - 1)
         our_ask = max(our_ask, fv_eff)
 
