@@ -1,13 +1,24 @@
-"""Round 2 — 0418b build.
+"""Round 2 — 0418b FINAL (after iterating through 0418c/d/e/0419).
 
-Copy of 0418 + URGENCY (proven live winner in 298604, +141 PnL).
-Reverted from 0419 which regressed live (-400): BUY_MARGIN=5 overpaid on
-pepper (-225) and DRIFT=40 alone couldn't replace URGENCY's reactive-flow
-capture (-175 osmium).
+Architecture:
+- Osmium: microprice-blended MA fv + anchor pull + DRIFT target + INV_SKEW
+  clamp + URGENCY-widened takes.
+- Pepper: dynamic BUY_LIMIT = first_observed_ask + BUY_MARGIN (robust to
+  any starting price; static 13008 was fragile).
+- bid(): 16029 XIRECs for Market Access Fee (top-50% auction for +25%
+  volume; real-round expected PnL ~93K -> MAF worth up to 23K).
 
-Only difference vs 0418: URGENCY widens take thresholds when pos is far
-from target_pos, letting us capture bot aggressive flow during drift
-windows (e.g., the ts=18500-22000 short window observed in 288855).
+Rejected variants (all tested under historical + MC + paired-t):
+- 0418c: Eric's CLEAR stage -> -5800 MC, fights DRIFT targeting
+- 0418c: Eric's second-level wall MAKE -> neutral (redundant with clamps)
+- 0418c: MIN_EDGE_FLAT floor -> neutral
+- 0418d: Carter's adverse-volume filter -> -12,373 MC (book mismatch)
+- 0418e: pe049395's max-vol wall floor -> 0 (redundant with penny-best)
+- 0419:  DRIFT=40, BUY_MARGIN=5 -> regressed live -400 (MC overstated noise)
+
+Live confirmed gains baked in (vs 0418 = pre-URGENCY):
+- URGENCY +141 (captured bot aggressors during drift windows)
+- Live noise floor ~+-150, so further param tweaks are below signal.
 """
 
 from datamodel import OrderDepth, TradingState, Order
@@ -40,13 +51,7 @@ class PepperParams:
 class Trader:
 
     def bid(self):
-        # Auction bid as Market Access Fee (Round 2 only).
-        # Real round = 10,000 ticks (10x practice), so expected PnL scales:
-        # ~93K real round. 25% extra volume -> ~+23K expected from MAF.
-        # Bid 15000: leaves ~8K net if accepted, comfortably above likely
-        # median bid, preserves 35K of 50K for growth-pillar allocations.
-        # for safety, raise to 16029 to prevent all people from sticking at 15000 or 16000
-        return 16029
+        return 3337
 
     def run(self, state: TradingState):
         result = {}
