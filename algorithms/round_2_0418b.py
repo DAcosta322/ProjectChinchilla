@@ -39,6 +39,15 @@ class PepperParams:
 
 class Trader:
 
+    def bid(self):
+        # Auction bid as Market Access Fee (Round 2 only).
+        # Real round = 10,000 ticks (10x practice), so expected PnL scales:
+        # ~93K real round. 25% extra volume -> ~+23K expected from MAF.
+        # Bid 15000: leaves ~8K net if accepted, comfortably above likely
+        # median bid, preserves 35K of 50K for growth-pillar allocations.
+        # for safety, raise to 16029 to prevent all people from sticking at 15000 or 16000
+        return 16029
+
     def run(self, state: TradingState):
         result = {}
         prices = []
