@@ -28,17 +28,22 @@ import json
 class HydrogelParams:
     SYMBOL = "HYDROGEL_PACK"
     POS_LIMIT = 200
-    INV_SKEW = 20
-    ANCHOR_SPAN = 2000      # EMA span (~equivalent SMA window)
+    INV_SKEW = 15           # wide spread (~15) needs matching skew to cross
+    ANCHOR_SPAN = 500       # short span: anchor tracks drift quickly so a
+                            # persistent trend doesnt pile one-sided longs
     MR_STRENGTH = 5         # target_pos per tick of (fair - anchor)
+    TREND_SPAN = 0          # trend-confidence filter disabled (short span
+    TREND_MAX_DEV = 0       # already provides the adaptivity we need)
 
 
 class VelvetParams:
     SYMBOL = "VELVETFRUIT_EXTRACT"
     POS_LIMIT = 200
-    INV_SKEW = 8
-    ANCHOR_SPAN = 5000
-    MR_STRENGTH = 5
+    INV_SKEW = 3            # tight spread (~5) - gentle posting
+    ANCHOR_SPAN = 5000      # VELVET mean-reverts cleanly on long horizon
+    MR_STRENGTH = 10        # strong MR signal, let skew execute patiently
+    TREND_SPAN = 0
+    TREND_MAX_DEV = 0
 
 
 class VEV4000Params:
@@ -48,6 +53,8 @@ class VEV4000Params:
     INV_SKEW = 0
     ANCHOR_SPAN = 0
     MR_STRENGTH = 0
+    TREND_SPAN = 0
+    TREND_MAX_DEV = 0
 
 
 class VEV4500Params:
@@ -57,6 +64,8 @@ class VEV4500Params:
     INV_SKEW = 0
     ANCHOR_SPAN = 0
     MR_STRENGTH = 0
+    TREND_SPAN = 0
+    TREND_MAX_DEV = 0
 
 
 def _micro_mid(od: OrderDepth) -> Optional[float]:
@@ -134,6 +143,24 @@ class Trader:
             raw = -P.MR_STRENGTH * (fv - anchor)
             target_pos = max(-P.POS_LIMIT,
                              min(P.POS_LIMIT, int(round(raw))))
+
+            # Soft trend filter: when the fast EMA has diverged far
+            # from the slow anchor, the market is in a confirmed trend
+            # and mean-reversion is unreliable. Scale target_pos down
+            # by a confidence factor in [0, 1] that decays linearly
+            # as |fast - anchor| approaches TREND_MAX_DEV.
+            if P.TREND_SPAN > 0 and P.TREND_MAX_DEV > 0:
+                fast_key = P.SYMBOL + "_f"
+                fprev = ema.get(fast_key)
+                if fprev is None:
+                    fast = fv
+                else:
+                    fa = 2.0 / (P.TREND_SPAN + 1.0)
+                    fast = fa * fv + (1 - fa) * fprev
+                ema[fast_key] = fast
+                divergence = abs(fast - anchor)
+                confidence = max(0.0, 1.0 - divergence / P.TREND_MAX_DEV)
+                target_pos = int(round(target_pos * confidence))
 
         # Skew relative to target. Long-vs-target lowers fv_eff (sell
         # pressure), short-vs-target raises it (buy pressure). When
