@@ -28,16 +28,18 @@ class HydrogelParams:
     SYMBOL = "HYDROGEL_PACK"
     POS_LIMIT = 200
     INV_SKEW = 15
-    FAST_MA = 100
-    SLOW_MA = 500
+    FAST_MA = 50
+    SLOW_MA = 200
+    MA_THRESHOLD = 20       # must clear this to flip - only real moves
 
 
 class VelvetParams:
     SYMBOL = "VELVETFRUIT_EXTRACT"
     POS_LIMIT = 200
     INV_SKEW = 3
-    FAST_MA = 100
-    SLOW_MA = 500
+    FAST_MA = 50
+    SLOW_MA = 200
+    MA_THRESHOLD = 5
 
 
 class VEV4000Params:
@@ -47,6 +49,7 @@ class VEV4000Params:
     INV_SKEW = 0
     FAST_MA = 0
     SLOW_MA = 0
+    MA_THRESHOLD = 0
 
 
 class VEV4500Params:
@@ -56,6 +59,7 @@ class VEV4500Params:
     INV_SKEW = 0
     FAST_MA = 0
     SLOW_MA = 0
+    MA_THRESHOLD = 0
 
 
 def _micro_mid(od: OrderDepth) -> Optional[float]:
@@ -79,10 +83,12 @@ class Trader:
         result: Dict[str, List[Order]] = {}
 
         hist: Dict[str, List[float]] = {}
+        tgt: Dict[str, int] = {}
         if state.traderData:
             try:
                 td = json.loads(state.traderData)
                 hist = td.get("hist", {})
+                tgt = td.get("tgt", {})
             except Exception:
                 pass
 
@@ -91,7 +97,7 @@ class Trader:
             fv = _micro_mid(od)
             if fv is not None:
                 result[HydrogelParams.SYMBOL] = self._trade(
-                    state, HydrogelParams, fv, hist)
+                    state, HydrogelParams, fv, hist, tgt)
 
         velvet_mid: Optional[float] = None
         if VelvetParams.SYMBOL in state.order_depths:
@@ -99,19 +105,20 @@ class Trader:
             velvet_mid = _micro_mid(od)
             if velvet_mid is not None:
                 result[VelvetParams.SYMBOL] = self._trade(
-                    state, VelvetParams, velvet_mid, hist)
+                    state, VelvetParams, velvet_mid, hist, tgt)
 
         if velvet_mid is not None:
             for P in (VEV4000Params, VEV4500Params):
                 if P.SYMBOL in state.order_depths:
                     fv = velvet_mid - P.STRIKE
                     result[P.SYMBOL] = self._trade(
-                        state, P, fv, hist)
+                        state, P, fv, hist, tgt)
 
-        return result, 0, json.dumps({"hist": hist})
+        return result, 0, json.dumps({"hist": hist, "tgt": tgt})
 
     def _trade(self, state: TradingState, P, fv: float,
-               hist: Dict[str, List[float]]) -> List[Order]:
+               hist: Dict[str, List[float]],
+               tgt: Dict[str, int]) -> List[Order]:
         orders: List[Order] = []
         od = state.order_depths[P.SYMBOL]
         pos = state.position.get(P.SYMBOL, 0)
@@ -119,7 +126,8 @@ class Trader:
         if not od.buy_orders or not od.sell_orders:
             return orders
 
-        target_pos = 0
+        warming_up = False
+        target_pos = tgt.get(P.SYMBOL, 0)
         if P.SLOW_MA > 0 and P.FAST_MA > 0:
             h = hist.get(P.SYMBOL, [])
             h.append(fv)
@@ -130,10 +138,23 @@ class Trader:
             if len(h) >= P.SLOW_MA:
                 fast_ma = sum(h[-P.FAST_MA:]) / P.FAST_MA
                 slow_ma = sum(h) / len(h)
-                if fast_ma > slow_ma:
+                diff = fast_ma - slow_ma
+                # Deadband: only flip when the separation clearly exceeds
+                # noise. Between -threshold and +threshold, keep whatever
+                # target we had - this is what blocks the whipsaw.
+                if diff > P.MA_THRESHOLD:
                     target_pos = P.POS_LIMIT
-                elif fast_ma < slow_ma:
+                elif diff < -P.MA_THRESHOLD:
                     target_pos = -P.POS_LIMIT
+            else:
+                # Slow MA not yet full - do not trade at all. Posting
+                # quotes during warmup would accumulate adverse inventory
+                # on a trending market before we could signal.
+                warming_up = True
+            tgt[P.SYMBOL] = target_pos
+
+        if warming_up:
+            return orders
 
         skew = P.INV_SKEW * (pos - target_pos) / P.POS_LIMIT
         fv_eff = fv - skew
