@@ -1,23 +1,21 @@
-"""Round 3 - HYDROGEL_PACK + VELVETFRUIT_EXTRACT + VEV_4000 + VEV_4500.
+"""Round 3 REGIME-SWITCH - MR by default, trend-follow when a
+persistent drift is detected.
 
-Strategy:
-- HYDROGEL_PACK, VELVETFRUIT_EXTRACT: mean-reverting delta-1 products.
-  Fair = live micro-mid. An EMA (equivalent to a long rolling MA,
-  ANCHOR_SPAN ticks) defines the "current center". A directional
-  target position is set proportional to (fair - anchor) * MR_STRENGTH,
-  clamped to +/- POS_LIMIT. Inventory skew then drives fv_eff toward
-  that target: short-vs-target raises fv_eff (buy pressure), long-vs-
-  target lowers it. When fv_eff moves past the book, the "take" stage
-  crosses the spread - buying the dip or selling the rip up to the
-  full POS_LIMIT.
-- VEV_4000, VEV_4500: deep ITM, TV ~= 0. Fair = S_mid - K (live
-  underlying each tick). Pure MM, no MR overlay: they already
-  inherit underlying MR via the shifting fair.
+Always tracks a fast EMA (FAST_SPAN) and slow EMA (SLOW_SPAN) of the
+live micro-mid. Let drift = fast - slow.
 
-Skipped: VEV_5000-5500 (sparse trade flow or 1-tick spreads),
-VEV_6000/6500 (pinned at 0.5 floor).
+  |drift| < TREND_THRESHOLD  ->  MR mode
+      target = -MR_STRENGTH * (fv - slow)     (fade the deviation)
 
-3-day backtest with tuned MR: ~+113K.
+  |drift| >= TREND_THRESHOLD ->  TREND mode
+      target = +TREND_STRENGTH * drift        (ride the direction)
+
+MR and trend produce OPPOSITE-signed targets for the same price action,
+so a switch is required; blending would just cancel. The threshold is
+the key tuning knob: too low => whipsaws into trend and loses on noise,
+too high => stays in MR even on real drifts.
+
+VEV_4000/4500 stay pure MM (no regime overlay).
 """
 
 from datamodel import OrderDepth, TradingState, Order
@@ -28,22 +26,25 @@ import json
 class HydrogelParams:
     SYMBOL = "HYDROGEL_PACK"
     POS_LIMIT = 200
-    INV_SKEW = 15           # wide spread (~15) needs matching skew to cross
-    ANCHOR_SPAN = 500       # short span: anchor tracks drift quickly so a
-                            # persistent trend doesnt pile one-sided longs
-    MR_STRENGTH = 5         # target_pos per tick of (fair - anchor)
-    TREND_SPAN = 0          # trend-confidence filter disabled (short span
-    TREND_MAX_DEV = 0       # already provides the adaptivity we need)
+    INV_SKEW = 15
+    FAST_SPAN = 200
+    SLOW_SPAN = 2000
+    MR_STRENGTH = 5
+    TREND_STRENGTH = 40
+    TREND_THRESHOLD = 4.0   # |fast - slow| above which we flip to trend
+    MODE = "switch"
 
 
 class VelvetParams:
     SYMBOL = "VELVETFRUIT_EXTRACT"
     POS_LIMIT = 200
-    INV_SKEW = 3            # tight spread (~5) - gentle posting
-    ANCHOR_SPAN = 5000      # VELVET mean-reverts cleanly on long horizon
-    MR_STRENGTH = 10        # strong MR signal, let skew execute patiently
-    TREND_SPAN = 0
-    TREND_MAX_DEV = 0
+    INV_SKEW = 3
+    FAST_SPAN = 200
+    SLOW_SPAN = 5000
+    MR_STRENGTH = 10
+    TREND_STRENGTH = 80
+    TREND_THRESHOLD = 3.0
+    MODE = "switch"
 
 
 class VEV4000Params:
@@ -51,10 +52,12 @@ class VEV4000Params:
     STRIKE = 4000
     POS_LIMIT = 300
     INV_SKEW = 0
-    ANCHOR_SPAN = 0
+    FAST_SPAN = 0
+    SLOW_SPAN = 0
     MR_STRENGTH = 0
-    TREND_SPAN = 0
-    TREND_MAX_DEV = 0
+    TREND_STRENGTH = 0
+    TREND_THRESHOLD = 0.0
+    MODE = "off"
 
 
 class VEV4500Params:
@@ -62,10 +65,12 @@ class VEV4500Params:
     STRIKE = 4500
     POS_LIMIT = 300
     INV_SKEW = 0
-    ANCHOR_SPAN = 0
+    FAST_SPAN = 0
+    SLOW_SPAN = 0
     MR_STRENGTH = 0
-    TREND_SPAN = 0
-    TREND_MAX_DEV = 0
+    TREND_STRENGTH = 0
+    TREND_THRESHOLD = 0.0
+    MODE = "off"
 
 
 def _micro_mid(od: OrderDepth) -> Optional[float]:
@@ -88,7 +93,6 @@ class Trader:
     def run(self, state: TradingState):
         result: Dict[str, List[Order]] = {}
 
-        # EMA state: {symbol: current_ema_value}
         ema: Dict[str, float] = {}
         if state.traderData:
             try:
@@ -130,41 +134,33 @@ class Trader:
         if not od.buy_orders or not od.sell_orders:
             return orders
 
-        # EMA anchor update + MR target
         target_pos = 0
-        if P.ANCHOR_SPAN > 0:
-            prev = ema.get(P.SYMBOL)
-            if prev is None:
-                anchor = fv
+        if P.MODE == "switch":
+            fast_key = P.SYMBOL + "_f"
+            slow_key = P.SYMBOL + "_s"
+            fprev = ema.get(fast_key)
+            sprev = ema.get(slow_key)
+            if fprev is None:
+                fast = fv
             else:
-                alpha = 2.0 / (P.ANCHOR_SPAN + 1.0)
-                anchor = alpha * fv + (1 - alpha) * prev
-            ema[P.SYMBOL] = anchor
-            raw = -P.MR_STRENGTH * (fv - anchor)
+                fa = 2.0 / (P.FAST_SPAN + 1.0)
+                fast = fa * fv + (1 - fa) * fprev
+            if sprev is None:
+                slow = fv
+            else:
+                sa = 2.0 / (P.SLOW_SPAN + 1.0)
+                slow = sa * fv + (1 - sa) * sprev
+            ema[fast_key] = fast
+            ema[slow_key] = slow
+
+            drift = fast - slow
+            if abs(drift) >= P.TREND_THRESHOLD:
+                raw = P.TREND_STRENGTH * drift
+            else:
+                raw = -P.MR_STRENGTH * (fv - slow)
             target_pos = max(-P.POS_LIMIT,
                              min(P.POS_LIMIT, int(round(raw))))
 
-            # Soft trend filter: when the fast EMA has diverged far
-            # from the slow anchor, the market is in a confirmed trend
-            # and mean-reversion is unreliable. Scale target_pos down
-            # by a confidence factor in [0, 1] that decays linearly
-            # as |fast - anchor| approaches TREND_MAX_DEV.
-            if P.TREND_SPAN > 0 and P.TREND_MAX_DEV > 0:
-                fast_key = P.SYMBOL + "_f"
-                fprev = ema.get(fast_key)
-                if fprev is None:
-                    fast = fv
-                else:
-                    fa = 2.0 / (P.TREND_SPAN + 1.0)
-                    fast = fa * fv + (1 - fa) * fprev
-                ema[fast_key] = fast
-                divergence = abs(fast - anchor)
-                confidence = max(0.0, 1.0 - divergence / P.TREND_MAX_DEV)
-                target_pos = int(round(target_pos * confidence))
-
-        # Skew relative to target. Long-vs-target lowers fv_eff (sell
-        # pressure), short-vs-target raises it (buy pressure). When
-        # flat and target is at limit, the shift crosses the book.
         skew = P.INV_SKEW * (pos - target_pos) / P.POS_LIMIT
         fv_eff = fv - skew
 
@@ -174,8 +170,6 @@ class Trader:
         buy_cap = P.POS_LIMIT - pos
         sell_cap = P.POS_LIMIT + pos
 
-        # Aggressive takes past fv_eff; directly buys / sells from
-        # market quotes up to POS_LIMIT when MR signal is strong.
         for price in sorted(od.sell_orders.keys()):
             if price < fv_eff and buy_cap > 0:
                 qty = min(-od.sell_orders[price], buy_cap)
@@ -187,7 +181,6 @@ class Trader:
                 orders.append(Order(P.SYMBOL, price, -qty))
                 sell_cap -= qty
 
-        # Posted quotes: penny-best shifted by skew.
         base_bid = best_bid + 1
         base_ask = best_ask - 1
         if base_bid >= base_ask:

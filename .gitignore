@@ -1,4 +1,6 @@
-Dump/
+dump/
 _pycache_/
 algorithms/_pycache_
 logs/
+.venv/
+.claude

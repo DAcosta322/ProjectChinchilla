@@ -23,7 +23,8 @@
       "Bash(python3 -c ' *)",
       "Bash(where python *)",
       "Bash(python compare_dummy_vs_best.py)",
-      "Bash(python backtester.py sub_wide_take --round 1)"
+      "Bash(python backtester.py sub_wide_take --round 1)",
+      "Bash(python -m venv d:/prosperity_imc/.venv)"
     ]
   }
 }
