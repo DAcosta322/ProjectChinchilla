@@ -1,0 +1,12 @@
+All the Velvetfruit Extract Vouchers have a Time To Expiry (TTE) of 7 Solvenarian days, starting from day 1. The available VEVs are:
+
+VEV_4000; Strike price: 4000
+VEV_4500; Strike price: 4500
+VEV_5000; Strike price: 5000
+VEV_5100; Strike price: 5100
+VEV_5200; Strike price: 5200
+VEV_5300; Strike price: 5300
+VEV_5400; Strike price: 5400
+VEV_5500; Strike price: 5500
+VEV_6000; Strike price: 6000
+VEV_6500; Strike price: 6500
