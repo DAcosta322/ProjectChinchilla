@@ -1,23 +1,22 @@
-"""Round 3 - HYDROGEL_PACK + VELVETFRUIT_EXTRACT + VEV_4000 + VEV_4500.
+"""Round 3 DOUBLE-MA crossover.
 
-Strategy:
-- HYDROGEL_PACK, VELVETFRUIT_EXTRACT: mean-reverting delta-1 products.
-  Fair = live micro-mid. An EMA (equivalent to a long rolling MA,
-  ANCHOR_SPAN ticks) defines the "current center". A directional
-  target position is set proportional to (fair - anchor) * MR_STRENGTH,
-  clamped to +/- POS_LIMIT. Inventory skew then drives fv_eff toward
-  that target: short-vs-target raises fv_eff (buy pressure), long-vs-
-  target lowers it. When fv_eff moves past the book, the "take" stage
-  crosses the spread - buying the dip or selling the rip up to the
-  full POS_LIMIT.
-- VEV_4000, VEV_4500: deep ITM, TV ~= 0. Fair = S_mid - K (live
-  underlying each tick). Pure MM, no MR overlay: they already
-  inherit underlying MR via the shifting fair.
+No assumption that price has a fixed mean. Track rolling fast-SMA
+and slow-SMA of the live micro-mid per symbol.
 
-Skipped: VEV_5000-5500 (sparse trade flow or 1-tick spreads),
-VEV_6000/6500 (pinned at 0.5 floor).
+  fast > slow   -> uptrend   -> target = +POS_LIMIT   (fully long)
+  fast < slow   -> downtrend -> target = -POS_LIMIT   (fully short)
+  equal         -> target = 0
 
-3-day backtest with tuned MR: ~+113K.
+Execution reuses the INV_SKEW mechanic from round_3.py: fv_eff is
+shifted by INV_SKEW * (pos - target)/POS_LIMIT so when pos is far
+from target, fv_eff crosses the book and drives position toward
+target via aggressive takes.
+
+Before slow-MA has enough samples (|history| < SLOW_MA), target = 0
+so we don't trade on unseeded averages.
+
+VEV_4000 / VEV_4500 stay pure MM around fair = S_mid - K, no MA
+overlay (they already inherit the underlying's direction per-tick).
 """
 
 from datamodel import OrderDepth, TradingState, Order
@@ -28,18 +27,17 @@ import json
 class HydrogelParams:
     SYMBOL = "HYDROGEL_PACK"
     POS_LIMIT = 200
-    INV_SKEW = 15           # wide spread (~15) needs matching skew to cross
-    ANCHOR_SPAN = 500       # short span: anchor tracks drift quickly so a
-                            # persistent trend doesnt pile one-sided longs
-    MR_STRENGTH = 5         # target_pos per tick of (fair - anchor)
+    INV_SKEW = 15
+    FAST_MA = 100
+    SLOW_MA = 500
 
 
 class VelvetParams:
     SYMBOL = "VELVETFRUIT_EXTRACT"
     POS_LIMIT = 200
-    INV_SKEW = 3            # tight spread (~5) - gentle posting
-    ANCHOR_SPAN = 5000      # VELVET mean-reverts cleanly on long horizon
-    MR_STRENGTH = 10        # strong MR signal, let skew execute patiently
+    INV_SKEW = 3
+    FAST_MA = 100
+    SLOW_MA = 500
 
 
 class VEV4000Params:
@@ -47,8 +45,8 @@ class VEV4000Params:
     STRIKE = 4000
     POS_LIMIT = 300
     INV_SKEW = 0
-    ANCHOR_SPAN = 0
-    MR_STRENGTH = 0
+    FAST_MA = 0
+    SLOW_MA = 0
 
 
 class VEV4500Params:
@@ -56,8 +54,8 @@ class VEV4500Params:
     STRIKE = 4500
     POS_LIMIT = 300
     INV_SKEW = 0
-    ANCHOR_SPAN = 0
-    MR_STRENGTH = 0
+    FAST_MA = 0
+    SLOW_MA = 0
 
 
 def _micro_mid(od: OrderDepth) -> Optional[float]:
@@ -80,12 +78,11 @@ class Trader:
     def run(self, state: TradingState):
         result: Dict[str, List[Order]] = {}
 
-        # EMA state: {symbol: current_ema_value}
-        ema: Dict[str, float] = {}
+        hist: Dict[str, List[float]] = {}
         if state.traderData:
             try:
                 td = json.loads(state.traderData)
-                ema = td.get("ema", {})
+                hist = td.get("hist", {})
             except Exception:
                 pass
 
@@ -93,28 +90,28 @@ class Trader:
             od = state.order_depths[HydrogelParams.SYMBOL]
             fv = _micro_mid(od)
             if fv is not None:
-                result[HydrogelParams.SYMBOL] = self._mm_with_fair(
-                    state, HydrogelParams, fv, ema)
+                result[HydrogelParams.SYMBOL] = self._trade(
+                    state, HydrogelParams, fv, hist)
 
         velvet_mid: Optional[float] = None
         if VelvetParams.SYMBOL in state.order_depths:
             od = state.order_depths[VelvetParams.SYMBOL]
             velvet_mid = _micro_mid(od)
             if velvet_mid is not None:
-                result[VelvetParams.SYMBOL] = self._mm_with_fair(
-                    state, VelvetParams, velvet_mid, ema)
+                result[VelvetParams.SYMBOL] = self._trade(
+                    state, VelvetParams, velvet_mid, hist)
 
         if velvet_mid is not None:
             for P in (VEV4000Params, VEV4500Params):
                 if P.SYMBOL in state.order_depths:
                     fv = velvet_mid - P.STRIKE
-                    result[P.SYMBOL] = self._mm_with_fair(
-                        state, P, fv, ema)
+                    result[P.SYMBOL] = self._trade(
+                        state, P, fv, hist)
 
-        return result, 0, json.dumps({"ema": ema})
+        return result, 0, json.dumps({"hist": hist})
 
-    def _mm_with_fair(self, state: TradingState, P, fv: float,
-                      ema: Dict[str, float]) -> List[Order]:
+    def _trade(self, state: TradingState, P, fv: float,
+               hist: Dict[str, List[float]]) -> List[Order]:
         orders: List[Order] = []
         od = state.order_depths[P.SYMBOL]
         pos = state.position.get(P.SYMBOL, 0)
@@ -122,23 +119,22 @@ class Trader:
         if not od.buy_orders or not od.sell_orders:
             return orders
 
-        # EMA anchor update + MR target
         target_pos = 0
-        if P.ANCHOR_SPAN > 0:
-            prev = ema.get(P.SYMBOL)
-            if prev is None:
-                anchor = fv
-            else:
-                alpha = 2.0 / (P.ANCHOR_SPAN + 1.0)
-                anchor = alpha * fv + (1 - alpha) * prev
-            ema[P.SYMBOL] = anchor
-            raw = -P.MR_STRENGTH * (fv - anchor)
-            target_pos = max(-P.POS_LIMIT,
-                             min(P.POS_LIMIT, int(round(raw))))
+        if P.SLOW_MA > 0 and P.FAST_MA > 0:
+            h = hist.get(P.SYMBOL, [])
+            h.append(fv)
+            if len(h) > P.SLOW_MA:
+                h = h[-P.SLOW_MA:]
+            hist[P.SYMBOL] = h
 
-        # Skew relative to target. Long-vs-target lowers fv_eff (sell
-        # pressure), short-vs-target raises it (buy pressure). When
-        # flat and target is at limit, the shift crosses the book.
+            if len(h) >= P.SLOW_MA:
+                fast_ma = sum(h[-P.FAST_MA:]) / P.FAST_MA
+                slow_ma = sum(h) / len(h)
+                if fast_ma > slow_ma:
+                    target_pos = P.POS_LIMIT
+                elif fast_ma < slow_ma:
+                    target_pos = -P.POS_LIMIT
+
         skew = P.INV_SKEW * (pos - target_pos) / P.POS_LIMIT
         fv_eff = fv - skew
 
@@ -148,8 +144,6 @@ class Trader:
         buy_cap = P.POS_LIMIT - pos
         sell_cap = P.POS_LIMIT + pos
 
-        # Aggressive takes past fv_eff; directly buys / sells from
-        # market quotes up to POS_LIMIT when MR signal is strong.
         for price in sorted(od.sell_orders.keys()):
             if price < fv_eff and buy_cap > 0:
                 qty = min(-od.sell_orders[price], buy_cap)
@@ -161,7 +155,6 @@ class Trader:
                 orders.append(Order(P.SYMBOL, price, -qty))
                 sell_cap -= qty
 
-        # Posted quotes: penny-best shifted by skew.
         base_bid = best_bid + 1
         base_ask = best_ask - 1
         if base_bid >= base_ask:

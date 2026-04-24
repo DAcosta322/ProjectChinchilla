@@ -1,23 +1,19 @@
-"""Round 3 - HYDROGEL_PACK + VELVETFRUIT_EXTRACT + VEV_4000 + VEV_4500.
+"""Round 3 MR + trend-bias variant on HYDROGEL.
 
-Strategy:
-- HYDROGEL_PACK, VELVETFRUIT_EXTRACT: mean-reverting delta-1 products.
-  Fair = live micro-mid. An EMA (equivalent to a long rolling MA,
-  ANCHOR_SPAN ticks) defines the "current center". A directional
-  target position is set proportional to (fair - anchor) * MR_STRENGTH,
-  clamped to +/- POS_LIMIT. Inventory skew then drives fv_eff toward
-  that target: short-vs-target raises fv_eff (buy pressure), long-vs-
-  target lowers it. When fv_eff moves past the book, the "take" stage
-  crosses the spread - buying the dip or selling the rip up to the
-  full POS_LIMIT.
-- VEV_4000, VEV_4500: deep ITM, TV ~= 0. Fair = S_mid - K (live
-  underlying each tick). Pure MM, no MR overlay: they already
-  inherit underlying MR via the shifting fair.
+Adds a trend nudge to the MR target so HYDROGEL can go short when
+price drifts persistently down. Keeps VELVET MR unchanged.
 
-Skipped: VEV_5000-5500 (sparse trade flow or 1-tick spreads),
-VEV_6000/6500 (pinned at 0.5 floor).
+Mechanism: anchor = slow EMA (span 500), fast = shorter EMA (span
+200), div = fast - anchor.
+  |div| <= DEADBAND        -> trend off, pure MR (fade the dip)
+  DEADBAND < |div| < SAT   -> trend contributes; MR linearly attenuated
+  |div| >= SAT             -> pure trend (MR off)
 
-3-day backtest with tuned MR: ~+113K.
+Status: on 4-day backtest this currently yields ~+13K vs pure MR's
++132K. The MR-dip-fade and short-the-drop signals are not cleanly
+separable with a simple EMA-crossover detector: historical dips are
+visible to this detector and triggering it costs the MR profit on
+d0/d1/d2. Keeping this file as reference / for further tuning.
 """
 
 from datamodel import OrderDepth, TradingState, Order
@@ -32,6 +28,15 @@ class HydrogelParams:
     ANCHOR_SPAN = 500       # short span: anchor tracks drift quickly so a
                             # persistent trend doesnt pile one-sided longs
     MR_STRENGTH = 5         # target_pos per tick of (fair - anchor)
+    FAST_SPAN = 200         # mid-length EMA; short enough to register a
+                            # steady drift but long enough not to respond
+                            # to oscillations around the anchor
+    TREND_BIAS = 25         # target shift per unit of (fast - anchor)
+                            # above deadband - overrides MR on drifts
+    TREND_DEADBAND = 5      # |fast - anchor| must exceed this before the
+                            # trend term contributes
+    TREND_SATURATION = 12   # when |fast - anchor| reaches this, MR is
+                            # fully disabled (linear attenuation between)
 
 
 class VelvetParams:
@@ -40,6 +45,10 @@ class VelvetParams:
     INV_SKEW = 3            # tight spread (~5) - gentle posting
     ANCHOR_SPAN = 5000      # VELVET mean-reverts cleanly on long horizon
     MR_STRENGTH = 10        # strong MR signal, let skew execute patiently
+    FAST_SPAN = 0           # VELVET's long anchor already protects against
+    TREND_BIAS = 0          # trend pile-up; no trend nudge needed
+    TREND_DEADBAND = 0
+    TREND_SATURATION = 0
 
 
 class VEV4000Params:
@@ -49,6 +58,10 @@ class VEV4000Params:
     INV_SKEW = 0
     ANCHOR_SPAN = 0
     MR_STRENGTH = 0
+    FAST_SPAN = 0
+    TREND_BIAS = 0
+    TREND_DEADBAND = 0
+    TREND_SATURATION = 0
 
 
 class VEV4500Params:
@@ -58,6 +71,10 @@ class VEV4500Params:
     INV_SKEW = 0
     ANCHOR_SPAN = 0
     MR_STRENGTH = 0
+    FAST_SPAN = 0
+    TREND_BIAS = 0
+    TREND_DEADBAND = 0
+    TREND_SATURATION = 0
 
 
 def _micro_mid(od: OrderDepth) -> Optional[float]:
@@ -122,7 +139,7 @@ class Trader:
         if not od.buy_orders or not od.sell_orders:
             return orders
 
-        # EMA anchor update + MR target
+        # EMA anchor update + MR target + trend nudge
         target_pos = 0
         if P.ANCHOR_SPAN > 0:
             prev = ema.get(P.SYMBOL)
@@ -132,7 +149,29 @@ class Trader:
                 alpha = 2.0 / (P.ANCHOR_SPAN + 1.0)
                 anchor = alpha * fv + (1 - alpha) * prev
             ema[P.SYMBOL] = anchor
-            raw = -P.MR_STRENGTH * (fv - anchor)
+
+            trend_signal = 0.0
+            mr_weight = 1.0
+            if P.FAST_SPAN > 0 and P.TREND_BIAS > 0:
+                fast_key = P.SYMBOL + "_f"
+                fprev = ema.get(fast_key)
+                if fprev is None:
+                    fast = fv
+                else:
+                    fa = 2.0 / (P.FAST_SPAN + 1.0)
+                    fast = fa * fv + (1 - fa) * fprev
+                ema[fast_key] = fast
+                divergence = fast - anchor
+                absdiv = abs(divergence)
+                if absdiv > P.TREND_DEADBAND:
+                    sign = 1.0 if divergence > 0 else -1.0
+                    trend_signal = P.TREND_BIAS * sign * (absdiv - P.TREND_DEADBAND)
+                    # Linearly attenuate MR between deadband and saturation.
+                    # Past saturation MR is off entirely and only trend acts.
+                    span = max(1.0, P.TREND_SATURATION - P.TREND_DEADBAND)
+                    mr_weight = max(0.0, 1.0 - (absdiv - P.TREND_DEADBAND) / span)
+
+            raw = mr_weight * (-P.MR_STRENGTH * (fv - anchor)) + trend_signal
             target_pos = max(-P.POS_LIMIT,
                              min(P.POS_LIMIT, int(round(raw))))
 
