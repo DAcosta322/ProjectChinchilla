@@ -1,26 +1,18 @@
-"""Round 3 MR + QUADRATIC inventory skew.
+"""Round 3 EFFICIENCY v2 - adaptive INV_SKEW on the underlyings only.
 
-Base: round_3.py MR framework.
+After testing options 1-3 on top of round_3_eff.py:
+  - Cross-voucher arb: ZERO opportunities (book always priced 507/492
+    against the parity gap, no free spread).
+  - VEV_5000 / VEV_5100 MM: TV drifts 3-4 ticks day-to-day, fixed
+    TV_OFFSET produces big losses (-$50K+ per day on VEV_5100).
+  - Adaptive INV_SKEW = spread on VEV_4000/4500: spread is wide (~21)
+    so INV_SKEW=21 is way too aggressive vs eff.py's tuned INV_SKEW=3,
+    blew up VEV_4000 PnL.
 
-Change: fv_eff skew is split into a linear term (unchanged from
-baseline) plus a quadratic term that ramps up at extreme inventories.
-
-  rel  = (pos - target_pos) / POS_LIMIT        in [-1, +1]
-  skew = INV_SKEW_LIN  * rel
-       + INV_SKEW_QUAD * rel * |rel|
-
-At rel near 0 (inventory close to target) the quadratic contribution
-is tiny so normal MM spread applies and we collect edge. At rel near
-+/-1 (inventory at extremes) the quadratic dominates and fv_eff is
-shifted enough to force the book to unwind us - like a volatility-
-independent panic button that only kicks in once we are deep in
-adverse inventory.
-
-Motivation: the prior feedback 'algo piles on one-sided' is an
-inventory-management problem. Linear skew at INV_SKEW=15 is already
-enough at +/- POS_LIMIT but gives too much slack at intermediate
-inventories. Quadratic skew keeps intermediate slack small and
-extreme pressure large.
+What survives: adaptive INV_SKEW on HYDROGEL and VELVET only, where
+spread is moderate and the underlyings actually need to cross the
+book to express MR signals. INV_SKEW = max(MIN, observed_spread).
+VEV_4000 / VEV_4500 keep eff.py's tuned INV_SKEW=3.
 """
 
 from datamodel import OrderDepth, TradingState, Order
@@ -31,39 +23,35 @@ import json
 class HydrogelParams:
     SYMBOL = "HYDROGEL_PACK"
     POS_LIMIT = 200
-    INV_SKEW_LIN = 15       # same as baseline
-    INV_SKEW_QUAD = 5       # small extra only at very high |rel|
+    INV_SKEW_MIN = 12       # adaptive: max(MIN, spread)
     ANCHOR_SPAN = 500
     MR_STRENGTH = 5
+    ADAPTIVE = True
 
 
 class VelvetParams:
     SYMBOL = "VELVETFRUIT_EXTRACT"
     POS_LIMIT = 200
-    INV_SKEW_LIN = 3
-    INV_SKEW_QUAD = 1
+    INV_SKEW_MIN = 3
     ANCHOR_SPAN = 5000
     MR_STRENGTH = 10
+    ADAPTIVE = True
 
 
 class VEV4000Params:
     SYMBOL = "VEV_4000"
     STRIKE = 4000
     POS_LIMIT = 300
-    INV_SKEW_LIN = 0
-    INV_SKEW_QUAD = 0
-    ANCHOR_SPAN = 0
-    MR_STRENGTH = 0
+    INV_SKEW_MIN = 3
+    ADAPTIVE = False        # eff.py value works - wide spread mismatches
 
 
 class VEV4500Params:
     SYMBOL = "VEV_4500"
     STRIKE = 4500
     POS_LIMIT = 300
-    INV_SKEW_LIN = 0
-    INV_SKEW_QUAD = 0
-    ANCHOR_SPAN = 0
-    MR_STRENGTH = 0
+    INV_SKEW_MIN = 3
+    ADAPTIVE = False
 
 
 def _micro_mid(od: OrderDepth) -> Optional[float]:
@@ -76,6 +64,13 @@ def _micro_mid(od: OrderDepth) -> Optional[float]:
     if bv + av <= 0:
         return (bb + ba) / 2.0
     return (bb * av + ba * bv) / (bv + av)
+
+
+def _skew_unit(P, od: OrderDepth) -> float:
+    if not P.ADAPTIVE:
+        return float(P.INV_SKEW_MIN)
+    spread = min(od.sell_orders.keys()) - max(od.buy_orders.keys())
+    return max(float(P.INV_SKEW_MIN), float(spread))
 
 
 class Trader:
@@ -98,36 +93,36 @@ class Trader:
             od = state.order_depths[HydrogelParams.SYMBOL]
             fv = _micro_mid(od)
             if fv is not None:
-                result[HydrogelParams.SYMBOL] = self._mm_with_fair(
-                    state, HydrogelParams, fv, ema)
+                _, orders = self._mr(state, HydrogelParams, fv, ema)
+                result[HydrogelParams.SYMBOL] = orders
 
         velvet_mid: Optional[float] = None
+        velvet_target_rel = 0.0
         if VelvetParams.SYMBOL in state.order_depths:
             od = state.order_depths[VelvetParams.SYMBOL]
             velvet_mid = _micro_mid(od)
             if velvet_mid is not None:
-                result[VelvetParams.SYMBOL] = self._mm_with_fair(
-                    state, VelvetParams, velvet_mid, ema)
+                tp, orders = self._mr(state, VelvetParams, velvet_mid, ema)
+                velvet_target_rel = tp / VelvetParams.POS_LIMIT
+                result[VelvetParams.SYMBOL] = orders
 
         if velvet_mid is not None:
             for P in (VEV4000Params, VEV4500Params):
                 if P.SYMBOL in state.order_depths:
                     fv = velvet_mid - P.STRIKE
-                    result[P.SYMBOL] = self._mm_with_fair(
-                        state, P, fv, ema)
+                    target = int(round(velvet_target_rel * P.POS_LIMIT))
+                    target = max(-P.POS_LIMIT, min(P.POS_LIMIT, target))
+                    result[P.SYMBOL] = self._exec(state, P, fv, target)
 
         return result, 0, json.dumps({"ema": ema})
 
-    def _mm_with_fair(self, state: TradingState, P, fv: float,
-                      ema: Dict[str, float]) -> List[Order]:
-        orders: List[Order] = []
+    def _mr(self, state: TradingState, P, fv: float,
+            ema: Dict[str, float]):
         od = state.order_depths[P.SYMBOL]
         pos = state.position.get(P.SYMBOL, 0)
-
         if not od.buy_orders or not od.sell_orders:
-            return orders
-
-        target_pos = 0
+            return 0, []
+        target = 0
         if P.ANCHOR_SPAN > 0:
             prev = ema.get(P.SYMBOL)
             if prev is None:
@@ -137,17 +132,25 @@ class Trader:
                 anchor = alpha * fv + (1 - alpha) * prev
             ema[P.SYMBOL] = anchor
             raw = -P.MR_STRENGTH * (fv - anchor)
-            target_pos = max(-P.POS_LIMIT,
-                             min(P.POS_LIMIT, int(round(raw))))
+            target = max(-P.POS_LIMIT, min(P.POS_LIMIT, int(round(raw))))
+        return target, self._do_orders(P, fv, pos, target, od)
 
-        # Linear + quadratic inventory skew
-        rel = (pos - target_pos) / P.POS_LIMIT
-        skew = P.INV_SKEW_LIN * rel + P.INV_SKEW_QUAD * rel * abs(rel)
+    def _exec(self, state: TradingState, P, fv: float, target: int) -> List[Order]:
+        od = state.order_depths[P.SYMBOL]
+        pos = state.position.get(P.SYMBOL, 0)
+        if not od.buy_orders or not od.sell_orders:
+            return []
+        return self._do_orders(P, fv, pos, target, od)
+
+    def _do_orders(self, P, fv: float, pos: int, target_pos: int,
+                   od: OrderDepth) -> List[Order]:
+        orders: List[Order] = []
+        skew_unit = _skew_unit(P, od)
+        skew = skew_unit * (pos - target_pos) / P.POS_LIMIT
         fv_eff = fv - skew
 
         best_bid = max(od.buy_orders.keys())
         best_ask = min(od.sell_orders.keys())
-
         buy_cap = P.POS_LIMIT - pos
         sell_cap = P.POS_LIMIT + pos
 
@@ -171,7 +174,6 @@ class Trader:
         shift = int(round(-skew))
         our_bid = base_bid + shift
         our_ask = base_ask + shift
-
         our_bid = min(our_bid, int(fv_eff))
         our_ask = max(our_ask, int(fv_eff) + 1)
         if our_ask <= our_bid:
@@ -181,5 +183,4 @@ class Trader:
             orders.append(Order(P.SYMBOL, our_bid, buy_cap))
         if sell_cap > 0:
             orders.append(Order(P.SYMBOL, our_ask, -sell_cap))
-
         return orders
