@@ -32,6 +32,12 @@ class HydrogelParams:
     INV_SKEW = 15
     ANCHOR_SPAN = 5000   # full-MR-day mean estimator (matches VEL).
     MR_STRENGTH = 5
+    # Bayesian prior for EMA initialization. If set, the slow EMA anchor
+    # starts at this value instead of the first observed price -> we get a
+    # meaningful dev signal at t=0 instead of waiting thousands of ticks
+    # for the EMA to drift toward the true cross-day mean. Memory: HYD
+    # intraday mean is stable around 9990 across all observed days.
+    FIXED_ANCHOR = 9990
     # Nonlinear MR boost: when |fv-anchor| > BOOST_THRESHOLD, add BOOST_GAIN
     # extra slope per unit excess. Steepens target curve at extremes so we
     # hit POS_LIMIT faster on big deviations. LOOCV-validated.
@@ -44,6 +50,22 @@ class HydrogelParams:
     # 0.05 is the "gentle nudge toward flat" sweet spot.
     NEUTRAL_BAND = 10.0
     NEUTRAL_GAIN = 0.05
+    # Trend-age detector. Tracks consecutive ticks where smoothed price velocity
+    # exceeds TREND_THRESH with consistent sign. After MIN_AGE ticks (noise filter),
+    # blends MR target toward trend-follow; ramps to full strength at FULL_AGE.
+    # When velocity dies down, age decays and target reverts to MR (which now
+    # says "buy" because dev still negative at trough = "buy them later").
+    # Default off: TREND_STRENGTH=0.
+    # FAST_SPAN remains 0 here so the MTS anchor-blend stays disabled (it
+    # conflicts with FIXED_ANCHOR). The trend detector uses its own EMA
+    # via TREND_FAST_SPAN below.
+    TREND_FAST_SPAN = 200      # short EMA for velocity computation
+    TREND_VEL_SPAN = 50        # smooth the per-tick velocity
+    # Sweep + LOOCV: HYD th=0.005 S=0.3 MIN=50 FULL=2000 wins all 3 held-out days.
+    TREND_THRESH = 0.005
+    TREND_MIN_AGE = 50
+    TREND_FULL_AGE = 2000
+    TREND_STRENGTH = 0.3
     # Optional multi-timescale anchor blend (DISABLED by default).
     # FAST_SPAN > 0 enables: anchor = (1-w)*slow + w*fast, where
     # w = clip((|fast - slow| - DEADBAND) / SCALE, 0, 1). Useful only if
@@ -89,6 +111,10 @@ class VelvetParams:
     INV_SKEW = 3
     ANCHOR_SPAN = 5000
     MR_STRENGTH = 10
+    # Cross-day mean for VEL is ~5250 (D0 5246, D1 5248, D2 5255).
+    # Live day 486008 started at 5295, drifted to 5201, ended 5232 — exactly
+    # the kind of day where a prior-based EMA init beats observed-price init.
+    FIXED_ANCHOR = 5250
     # Nonlinear MR boost: VEL has tighter intraday std (~14), so smaller
     # threshold (5) and bigger gain (5) — small deviations get extra slope.
     BOOST_THRESHOLD = 5.0
@@ -96,6 +122,15 @@ class VelvetParams:
     # Active flatten - VEL has tighter |dev| range so smaller band.
     NEUTRAL_BAND = 3.0
     NEUTRAL_GAIN = 0.05
+    TREND_FAST_SPAN = 200
+    TREND_VEL_SPAN = 50
+    # Sweep + LOOCV: VEL th=0.02 S=0.6 MIN=200 FULL=2000 wins.
+    # Higher threshold + bigger strength than HYD because VEL has lower vol -
+    # smaller velocity values, so threshold needs to be tuned for VEL's scale.
+    TREND_THRESH = 0.02
+    TREND_MIN_AGE = 200
+    TREND_FULL_AGE = 2000
+    TREND_STRENGTH = 0.6
     PROFIT_DIST = 15
     PROFIT_RANGE = 15
     VOL_SPAN = 0
@@ -343,6 +378,8 @@ class Trader:
         hist = td.get("hist", {})
         trend = td.get("trend", {})
         fast_ema = td.get("fema", {})
+        trend_age = td.get("tage", {})
+        trend_sign = td.get("tsign", {})
 
         for P in (HydrogelParams, VelvetParams):
             if P.PROFIT_DIST <= 0 and P.TOX_FULL_OFF <= 0:
@@ -368,7 +405,7 @@ class Trader:
                 _, orders = self._mr(state, HydrogelParams, fv, ema,
                                      avg_entry, prev_fv, var_ewma, tox,
                                      prev_book, ofi_ewma, hist, trend,
-                                     fast_ema)
+                                     fast_ema, trend_age, trend_sign)
                 result[HydrogelParams.SYMBOL] = orders
 
         # VELVET
@@ -385,7 +422,7 @@ class Trader:
                 tp, orders = self._mr(state, VelvetParams, velvet_mid, ema,
                                       avg_entry, prev_fv, var_ewma, tox,
                                       prev_book, ofi_ewma, hist, trend,
-                                      fast_ema)
+                                      fast_ema, trend_age, trend_sign)
                 velvet_target_rel = tp / VelvetParams.POS_LIMIT
                 result[VelvetParams.SYMBOL] = orders
 
@@ -419,7 +456,8 @@ class Trader:
             "ema": ema, "avg": avg_entry, "tv": tv, "tvn": tv_n,
             "pfv": prev_fv, "var": var_ewma, "tox": tox,
             "pbook": prev_book, "ofi": ofi_ewma, "hist": hist,
-            "trend": trend, "fema": fast_ema})
+            "trend": trend, "fema": fast_ema,
+            "tage": trend_age, "tsign": trend_sign})
 
     def _mr(self, state: TradingState, P, fv: float,
             ema: Dict[str, float],
@@ -431,7 +469,9 @@ class Trader:
             ofi_ewma: Dict[str, float],
             hist: Dict[str, List[float]],
             trend: Dict[str, float],
-            fast_ema: Dict[str, float]):
+            fast_ema: Dict[str, float],
+            trend_age: Dict[str, int],
+            trend_sign: Dict[str, int]):
         od = state.order_depths[P.SYMBOL]
         pos = state.position.get(P.SYMBOL, 0)
         if not od.buy_orders or not od.sell_orders:
@@ -467,7 +507,11 @@ class Trader:
             holt_span = getattr(P, "HOLT_TREND_SPAN", 0)
             alpha = 2.0 / (P.ANCHOR_SPAN + 1.0)
             if prev_L is None:
-                L = fv
+                # Bayesian prior: init EMA at FIXED_ANCHOR (historical mean)
+                # if available, else at current price. Lets us trade on
+                # day-1 deviations without waiting for EMA to drift.
+                fa = getattr(P, "FIXED_ANCHOR", None)
+                L = float(fa) if fa is not None else fv
                 T = 0.0
             elif holt_span > 0:
                 # Holt's level + trend: L tracks fv but is updated using
@@ -536,6 +580,67 @@ class Trader:
                    + getattr(P, 'OFI_GAIN', 0) * ofi_smooth
                    + range_comp)
             target = max(-P.POS_LIMIT, min(P.POS_LIMIT, int(round(raw))))
+
+            # Trend-age modulation: detect SUSTAINED price-velocity (not regime)
+            # via the per-tick change of fast_ema. Track consecutive ticks where
+            # |velocity| > TREND_THRESH with consistent sign. Once age exceeds
+            # MIN_AGE (filtered out noise), blend MR target toward trend-follow
+            # so we sell during sustained downtrends and buy during uptrends.
+            # When the velocity dies/reverses, age decays and target reverts to
+            # MR - which naturally re-buys at the bottom (dev negative -> long).
+            tr_thresh = getattr(P, "TREND_THRESH", 0.0)
+            tr_min_age = getattr(P, "TREND_MIN_AGE", 0)
+            tr_full_age = getattr(P, "TREND_FULL_AGE", 1)
+            tr_strength = getattr(P, "TREND_STRENGTH", 0.0)
+            tr_vel_span = getattr(P, "TREND_VEL_SPAN", 50)
+            tr_fast_span = getattr(P, "TREND_FAST_SPAN", 0)
+            if tr_thresh > 0 and tr_strength > 0 and tr_fast_span > 0:
+                # Compute our own fast EMA (independent of MTS anchor-blend).
+                # Init at FIXED_ANCHOR if available, else current fv.
+                key = P.SYMBOL + "_TFAST"
+                prev_tf = fast_ema.get(key)
+                a_tf = 2.0 / (tr_fast_span + 1.0)
+                if prev_tf is None:
+                    fa = getattr(P, "FIXED_ANCHOR", None)
+                    prev_tf = float(fa) if fa is not None else fv
+                Tf = a_tf * fv + (1 - a_tf) * prev_tf
+                fast_ema[key] = Tf
+                velocity_raw = Tf - prev_tf
+                prev_vel = trend.get(P.SYMBOL + "_VEL", 0.0)
+                bv = 2.0 / (tr_vel_span + 1.0)
+                velocity = bv * velocity_raw + (1.0 - bv) * prev_vel
+                trend[P.SYMBOL + "_VEL"] = velocity
+
+                if velocity > tr_thresh:
+                    cur_sign = 1
+                elif velocity < -tr_thresh:
+                    cur_sign = -1
+                else:
+                    cur_sign = 0
+                prev_age = trend_age.get(P.SYMBOL, 0)
+                prev_sign = trend_sign.get(P.SYMBOL, 0)
+                if cur_sign == 0:
+                    new_age = max(0, prev_age - 2)
+                    new_sign = prev_sign if new_age > 0 else 0
+                elif cur_sign == prev_sign:
+                    new_age = prev_age + 1
+                    new_sign = cur_sign
+                else:
+                    new_age = 1
+                    new_sign = cur_sign
+                trend_age[P.SYMBOL] = new_age
+                trend_sign[P.SYMBOL] = new_sign
+
+                if new_age > tr_min_age and new_sign != 0:
+                    span_a = max(1, tr_full_age - tr_min_age)
+                    maturity = max(0.0, min(1.0, (new_age - tr_min_age) / span_a))
+                    follow_w = tr_strength * maturity
+                    # Sign convention: velocity > 0 = uptrend, < 0 = downtrend.
+                    # During uptrend (price rising), trend-follow says LONG.
+                    # During downtrend, trend-follow says SHORT.
+                    follow_target = new_sign * P.POS_LIMIT
+                    target = int(round((1 - follow_w) * target + follow_w * follow_target))
+                    target = max(-P.POS_LIMIT, min(P.POS_LIMIT, target))
 
         decay = _profit_decay(P, pos, fv, avg_entry.get(P.SYMBOL, 0.0))
         target = int(round(target * decay))
