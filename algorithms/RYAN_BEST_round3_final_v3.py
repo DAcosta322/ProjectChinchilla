@@ -34,9 +34,11 @@ class HydrogelParams:
     VOL_REF = 2.0
     TOX_SPAN = 50
     TOX_FULL_OFF = 0
-    # OFI_GAIN bumped 1.0 -> 2.0 (sweep): +$970 total, +$1.1K D3 vs baseline.
-    # Robust across 1.5-3.0; collapses at 5.0.
-    OFI_GAIN = 2.0
+    # OFI_GAIN held at 1.0. A sweep showed 2.0 gave +$970 in-sample but LOOCV
+    # (tune on 3 days, score on held-out) returned -$2.2K vs baseline; per-day
+    # signs were mixed (D0 hurt by $2K, D1/D2/D3 helped); VEL OFI_GAIN sweep
+    # showed VEL doesn't benefit either. Verdict: 2.0 was overfit noise.
+    OFI_GAIN = 1.0
     OFI_SPAN = 20
     # Holt level+trend anchor: 0 = classical EMA. >0 enables Holt's method
     # with the given trend-EWMA span. During a sustained drift the anchor
