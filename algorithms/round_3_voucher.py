@@ -32,6 +32,18 @@ class HydrogelParams:
     INV_SKEW = 15
     ANCHOR_SPAN = 5000   # full-MR-day mean estimator (matches VEL).
     MR_STRENGTH = 5
+    # Nonlinear MR boost: when |fv-anchor| > BOOST_THRESHOLD, add BOOST_GAIN
+    # extra slope per unit excess. Steepens target curve at extremes so we
+    # hit POS_LIMIT faster on big deviations. LOOCV-validated.
+    BOOST_THRESHOLD = 20.0
+    BOOST_GAIN = 3.0
+    # Active flatten near mean: when |fv-anchor| < NEUTRAL_BAND, pull pos
+    # toward 0 with strength NEUTRAL_GAIN. Frees up capacity for next move.
+    # Sweep + LOOCV: HYD b=10 g=0.05 (broad plateau across band 5-20 at g=0.05).
+    # Higher gains (>=0.5) cost spread on too many crossings and lose money;
+    # 0.05 is the "gentle nudge toward flat" sweet spot.
+    NEUTRAL_BAND = 10.0
+    NEUTRAL_GAIN = 0.05
     # Optional multi-timescale anchor blend (DISABLED by default).
     # FAST_SPAN > 0 enables: anchor = (1-w)*slow + w*fast, where
     # w = clip((|fast - slow| - DEADBAND) / SCALE, 0, 1). Useful only if
@@ -77,6 +89,13 @@ class VelvetParams:
     INV_SKEW = 3
     ANCHOR_SPAN = 5000
     MR_STRENGTH = 10
+    # Nonlinear MR boost: VEL has tighter intraday std (~14), so smaller
+    # threshold (5) and bigger gain (5) — small deviations get extra slope.
+    BOOST_THRESHOLD = 5.0
+    BOOST_GAIN = 5.0
+    # Active flatten - VEL has tighter |dev| range so smaller band.
+    NEUTRAL_BAND = 3.0
+    NEUTRAL_GAIN = 0.05
     PROFIT_DIST = 15
     PROFIT_RANGE = 15
     VOL_SPAN = 0
@@ -491,7 +510,29 @@ class Trader:
                 anchor = slow_anchor
 
             mr_eff = P.MR_STRENGTH * vol_factor
-            raw = (-mr_eff * (fv - anchor)
+            dev = fv - anchor
+            # Nonlinear boost: when |dev| exceeds BOOST_THRESHOLD, add extra
+            # MR pressure proportional to excess. Steepens the target curve
+            # at extremes so we hit POS_LIMIT faster on rare big deviations.
+            bt_th = getattr(P, "BOOST_THRESHOLD", 1e9)
+            bg = getattr(P, "BOOST_GAIN", 0.0)
+            boost = 0.0
+            if bg > 0 and abs(dev) > bt_th:
+                excess = abs(dev) - bt_th
+                boost = -bg * (1.0 if dev > 0 else -1.0) * excess
+            # Active-flatten in the neutral zone: when |dev| < NEUTRAL_BAND,
+            # add a position-decay term that drives target toward -pos so we
+            # unwind to flat. Frees up POS_LIMIT for the next genuine move.
+            #   pull = -NEUTRAL_GAIN * pos * (1 - |dev|/NEUTRAL_BAND)
+            # Ramps from full strength at dev=0 to zero at the band edge.
+            n_band = getattr(P, "NEUTRAL_BAND", 0.0)
+            n_gain = getattr(P, "NEUTRAL_GAIN", 0.0)
+            neutral_pull = 0.0
+            if n_band > 0 and n_gain > 0 and abs(dev) < n_band:
+                neutral_pull = -n_gain * pos * (1.0 - abs(dev) / n_band)
+            raw = (-mr_eff * dev
+                   + boost
+                   + neutral_pull
                    + getattr(P, 'OFI_GAIN', 0) * ofi_smooth
                    + range_comp)
             target = max(-P.POS_LIMIT, min(P.POS_LIMIT, int(round(raw))))
