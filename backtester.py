@@ -210,20 +210,20 @@ class OrderMatcher:
         self.position = position
         self.pnl = pnl
 
-    def _record_buy(self, trades, product, ts, price, fill):
+    def _record_buy(self, trades, product, ts, price, fill, counterparty: str = ""):
         self.position[product] = self.position.get(product, 0) + fill
         self.pnl[product] = self.pnl.get(product, 0.0) - float(price) * fill
         trades.append({
-            "timestamp": ts, "buyer": "SUBMISSION", "seller": "",
+            "timestamp": ts, "buyer": "SUBMISSION", "seller": counterparty,
             "symbol": product, "currency": CURRENCY,
             "price": float(price), "quantity": fill,
         })
 
-    def _record_sell(self, trades, product, ts, price, fill):
+    def _record_sell(self, trades, product, ts, price, fill, counterparty: str = ""):
         self.position[product] = self.position.get(product, 0) - fill
         self.pnl[product] = self.pnl.get(product, 0.0) + float(price) * fill
         trades.append({
-            "timestamp": ts, "buyer": "", "seller": "SUBMISSION",
+            "timestamp": ts, "buyer": counterparty, "seller": "SUBMISSION",
             "symbol": product, "currency": CURRENCY,
             "price": float(price), "quantity": fill,
         })
@@ -307,53 +307,88 @@ class OrderMatcher:
             else:
                 continue
 
-            mt_buy_flow: Dict[float, int] = {}
-            mt_sell_flow: Dict[float, int] = {}
+            # Per-side flow keyed by price. Each entry is a list of mutable
+            # [aggressor_bot, qty] pairs in trade order, so we can attribute
+            # individual fills back to specific counterparties (FIFO).
+            mt_buy_flow: Dict[float, List[List]] = {}
+            mt_sell_flow: Dict[float, List[List]] = {}
             for mt in product_mt:
                 px = float(mt.price if hasattr(mt, 'price') else mt['price'])
                 qty = int(mt.quantity if hasattr(mt, 'quantity') else mt['quantity'])
                 if qty <= 0:
                     continue
+                buyer = getattr(mt, 'buyer', None) or (mt['buyer'] if isinstance(mt, dict) else "") or ""
+                seller = getattr(mt, 'seller', None) or (mt['seller'] if isinstance(mt, dict) else "") or ""
                 if px > mid:
-                    mt_buy_flow[px] = mt_buy_flow.get(px, 0) + qty
+                    mt_buy_flow.setdefault(px, []).append([buyer, qty])    # buyer was aggressor
                 elif px < mid:
-                    mt_sell_flow[px] = mt_sell_flow.get(px, 0) + qty
+                    mt_sell_flow.setdefault(px, []).append([seller, qty])  # seller was aggressor
                 else:
                     if at_mid_is_buy:
-                        mt_buy_flow[px] = mt_buy_flow.get(px, 0) + qty
+                        mt_buy_flow.setdefault(px, []).append([buyer, qty])
                     else:
-                        mt_sell_flow[px] = mt_sell_flow.get(px, 0) + qty
+                        mt_sell_flow.setdefault(px, []).append([seller, qty])
+
+            def _level_total(level: List[List]) -> int:
+                return sum(p[1] for p in level)
+
+            def _consume(level: List[List], skip: float, take: int) -> List[tuple]:
+                """Skip first `skip` qty (queue ahead), then take up to `take`.
+                Mutates level in place. Returns list of (counterparty, fill_qty)."""
+                # Skip queue
+                while level and skip > 0:
+                    pair = level[0]
+                    if pair[1] <= skip:
+                        skip -= pair[1]
+                        level.pop(0)
+                    else:
+                        pair[1] -= int(skip) if pair[1] > skip else pair[1]
+                        # Float-safe: drop fractional skip after consuming int part
+                        skip = 0
+                        break
+                fills: List[tuple] = []
+                while level and take > 0:
+                    pair = level[0]
+                    take_amt = min(pair[1], take)
+                    fills.append((pair[0], take_amt))
+                    pair[1] -= take_amt
+                    take -= take_amt
+                    if pair[1] <= 0:
+                        level.pop(0)
+                return fills
 
             # --- Resting BUYs vs aggressive sell flow ---
-            # Flow at price Q can hit our bid at P if P >= Q.
-            # Order bids best-first; match each flow bucket ascending by Q.
             for order_price in sorted(resting_buys.keys(), reverse=True):
                 remaining = resting_buys[order_price]
                 if remaining <= 0:
                     continue
-                # Queue ahead at same level
                 if best_orig_bid is not None and order_price <= best_orig_bid:
                     queue_ahead = orig_buy_book.get(int(order_price), 0)
                 else:
-                    queue_ahead = 0  # new best or deep
+                    queue_ahead = 0
                 eff_queue = queue_ahead * self.QUEUE_FACTOR
 
                 for mt_price in sorted(mt_sell_flow.keys()):
                     if mt_price > order_price or remaining <= 0:
                         break
-                    available = mt_sell_flow[mt_price]
-                    if available <= 0:
+                    level = mt_sell_flow[mt_price]
+                    level_total = _level_total(level)
+                    if level_total <= 0:
                         continue
-                    available -= eff_queue
-                    eff_queue = max(0.0, eff_queue - mt_sell_flow[mt_price])  # consume queue first
+                    available = level_total - eff_queue
+                    eff_queue = max(0.0, eff_queue - level_total)
                     if available <= 0:
+                        # Queue consumed the whole level; drain it from the list
+                        _consume(level, level_total, 0)
                         continue
                     fill = int(min(remaining, available))
-                    if fill <= 0:
-                        continue
-                    self._record_buy(trades, product, timestamp, order_price, fill)
-                    remaining -= fill
-                    mt_sell_flow[mt_price] -= fill
+                    skip = level_total - available  # qty consumed by queue ahead
+                    fills = _consume(level, skip, fill)
+                    for counterparty, q in fills:
+                        if q > 0:
+                            self._record_buy(trades, product, timestamp,
+                                             order_price, q, counterparty=counterparty)
+                            remaining -= q
                 resting_buys[order_price] = remaining
 
             # --- Resting SELLs vs aggressive buy flow ---
@@ -370,19 +405,23 @@ class OrderMatcher:
                 for mt_price in sorted(mt_buy_flow.keys(), reverse=True):
                     if mt_price < order_price or remaining <= 0:
                         break
-                    available = mt_buy_flow[mt_price]
-                    if available <= 0:
+                    level = mt_buy_flow[mt_price]
+                    level_total = _level_total(level)
+                    if level_total <= 0:
                         continue
-                    available -= eff_queue
-                    eff_queue = max(0.0, eff_queue - mt_buy_flow[mt_price])
+                    available = level_total - eff_queue
+                    eff_queue = max(0.0, eff_queue - level_total)
                     if available <= 0:
+                        _consume(level, level_total, 0)
                         continue
                     fill = int(min(remaining, available))
-                    if fill <= 0:
-                        continue
-                    self._record_sell(trades, product, timestamp, order_price, fill)
-                    remaining -= fill
-                    mt_buy_flow[mt_price] -= fill
+                    skip = level_total - available
+                    fills = _consume(level, skip, fill)
+                    for counterparty, q in fills:
+                        if q > 0:
+                            self._record_sell(trades, product, timestamp,
+                                              order_price, q, counterparty=counterparty)
+                            remaining -= q
                 resting_sells[order_price] = remaining
 
         return trades
