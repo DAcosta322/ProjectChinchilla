@@ -592,9 +592,19 @@ def run_backtest(
     all_trades = []
     all_orders = []  # Track all placed orders for analysis
 
+    # IMC platform convention: state.market_trades at ts=t contains trades
+    # from the PREVIOUS tick window (ts=t - tick_step). The CSV labels each
+    # trade by its execution ts, so the trader at ts=t observes trades
+    # labeled ts=t-tick_step. The matching engine still uses current-ts
+    # trades for Phase 2 passive fills (since those represent the flow
+    # during the resting window after our orders are placed).
+    tick_step = (timestamps[1] - timestamps[0]) if len(timestamps) >= 2 else 100
+
     for ts in timestamps:
         prices_at_ts = price_data[ts]
-        market_trades_at_ts = trade_data.get(ts, {})
+        market_trades_at_ts = trade_data.get(ts, {})         # for Phase 2 matching
+        # Previous-tick trades = what the platform shows the trader.
+        market_trades_for_state = trade_data.get(ts - tick_step, {})
 
         state = build_trading_state(
             timestamp=ts,
@@ -602,7 +612,7 @@ def run_backtest(
             products=products,
             position=position,
             own_trades=own_trades,
-            market_trades_at_ts=market_trades_at_ts,
+            market_trades_at_ts=market_trades_for_state,
             trader_data=trader_data,
         )
 

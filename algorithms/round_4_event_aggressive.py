@@ -1,22 +1,20 @@
-"""Round 4 botflow - structurally cleaned algo.
+"""Round 4 event-AGGRESSIVE algo.
 
-Active signals (all empirically validated, see audit table in sweep_audit.py):
-  HYD/VEL EMA anchor with FIXED_ANCHOR prior   (Bayesian init at cross-day mean)
-  Linear MR target                              (-MR_STRENGTH * dev)
-  Nonlinear BOOST past BOOST_THRESHOLD          (extra slope at extremes)
-  NEUTRAL_BAND active flatten near mean         (free up POS_LIMIT for next move)
-  TREND-FOLLOW with velocity-based aging        (sell during sustained downtrend)
-  OFI per-tick book imbalance                   (large win on VEL)
-  PROFIT_DECAY when running in deep profit
-  HYD VOL_SPAN volatility-adapted MR_STRENGTH
-  Bot-event signal on VELVET (Mark 67 buy / Mark 49 sell EWMA)
-  Voucher delta-regression spillover            (8 strikes 4000-5500)
+Variant of round_4_botflow.py that drives VELVET position primarily by the
+bot-event signal, going to FULL POS_LIMIT when the signal is strong enough.
 
-Dead branches removed (zero contribution at every BT setting tested):
-  Holt level+trend anchor
-  Multi-timescale (MTS) anchor blend
-  Range-position blend
-  Toxicity damper
+Differences vs round_4_botflow.py:
+  1. Signal is sharpened: aggressive (price > or < mid) Mark 67/49 prints
+     count at full weight; at-mid prints are scaled down. Optionally folds
+     in Mark 14 VELVET trades as a confirming mirror (their VELVET sells
+     lead -1.29 mid at h=100).
+  2. Signal is mapped DIRECTLY to ±POS_LIMIT target (not just a +/-50 bias).
+     conviction = clip(signal / SIGNAL_FULL, -1, 1); sig_target = conviction
+     * POS_LIMIT. When |sig_target| > MR_target's magnitude, signal wins.
+  3. Voucher spillover sees the boosted VELVET target → vouchers lever up
+     their position via DELTA × VEL signal.
+
+Same chassis (HYD, vouchers, helpers) as round_4_botflow.py.
 """
 
 from datamodel import OrderDepth, TradingState, Order
@@ -88,7 +86,7 @@ class HydrogelParams:
     # AGG_OVERSHOOT. Without this, on tight-spread strikes we'd over-fill
     # past target via opportunistic crossings. LOOCV sweep: 10 wins held-out
     # D3, broad plateau 0-10. Disable with very large value.
-    AGG_OVERSHOOT = 2
+    AGG_OVERSHOOT = 10
 
 
 class VelvetParams:
@@ -124,7 +122,7 @@ class VelvetParams:
     OFI_GAIN = 1.0
     OFI_SPAN = 20
     BASE_QTY = 10
-    AGG_OVERSHOOT = 2
+    AGG_OVERSHOOT = 10
 
 
 # ---- Voucher trading: 8 strikes, all using adaptive TV + VEL spillover ----
@@ -146,7 +144,7 @@ class VelvetParams:
 class _VevBase:
     POS_LIMIT = 300
     MIN_SAMPLES = 100
-    AGG_OVERSHOOT = 2
+    AGG_OVERSHOOT = 10
     # Delta-regression fair-value model:
     #   fair = alpha_t + DELTA * velvet_mid
     #   alpha_t = EWMA(vev_mid - DELTA * velvet_mid, span=ALPHA_SPAN)
@@ -228,45 +226,83 @@ VOUCHER_PARAMS = (VEV4000Params, VEV4500Params, VEV5000Params,
 # Voucher (Mark 01/22) signals dropped — lead-lag was ~0 across horizons.
 # Vouchers track VELVET delta; flow doesn't move them.
 # ---------------------------------------------------------------------------
-class BotFlowParams:
-    # EWMA half-life in ticks. Lead-lag profile peaks at h=1 and stays high
-    # through h~100, so half-life ~50 captures the predictive window without
-    # over-weighting old prints.
-    HALF_LIFE = 50
-    # Gain on the (Mark 67 buy event - Mark 49 sell event) EWMA.
-    # The +$1,226 BT win at gain=0.20 was ~90% lookahead artifact: BT was
-    # feeding same-tick trades, but the platform feeds previous-tick trades
-    # (state.market_trades = trades from ts-100). After fixing the BT to
-    # match platform behavior, the signal contributes only +$120 in-sample
-    # and LOOCV-fails (-$1,524 vs always-off). Disabled.
-    VELVET_EVENT_GAIN = 0.0
-    # Cap on absolute signal contribution to target (in target units).
-    SIGNAL_CAP = 50
+class BotEventParams:
+    # 270-config sweep + LOOCV on R4 D1/D2/D3 (post-BT-lookahead-fix).
+    # Best in-sample: SIGNAL_FULL=100, THRESH=10, HL=100, AT_MID=1.0, M14=0.1
+    #   D1 +2,010 / D2 +6,760 / D3 +1,790 (total +10,560 vs baseline 384,790)
+    # LOOCV held-out total: +3,380 (D1 +2,010, D2 −420, D3 +1,790).
+    # D1 and D3 hold-outs independently pick this same config; D2 hold-out
+    # picks a different config and loses 420 — so D2 is the weakest point.
+    HALF_LIFE = 100
+    # Signal magnitude (qty units) at which conviction = 100% → ±POS_LIMIT.
+    # Larger SIGNAL_FULL = need more sustained activity to hit limit.
+    SIGNAL_FULL = 100.0
+    # Minimum |signal| to engage. Below this, plain MR target.
+    SIGNAL_THRESH = 10.0
+    # Weight on at-mid Mark 67/49 prints. 1.0 = full weight (LOOCV winner;
+    # surprising given lead-lag was stronger on aggressive prints, but with
+    # HL=100 the at-mid prints accumulate enough to add signal).
+    AT_MID_WEIGHT = 1.0
+    # Mark 14 VELVET trades as confirming mirror (their h=100 lead-lag ≈ -1.3).
+    M14_WEIGHT = 0.1
+    # Combine: 'blend' = conviction-weighted (signal weight = |conv|), preserves
+    # MR target when signal is weak. 'max_mag' / 'override' less robust.
+    COMBINE_MODE = "blend"
+    # Conviction amplifier — multiplies |conv| before clipping to 1 in blend.
+    # 256-config sweep result: AMP=1 is the OPTIMUM. Pushing bot dominance via
+    # AMP>1 monotonically hurts (AMP=2 → +4.4K, AMP=4 → -12K, AMP=8 → -36K,
+    # override mode → -44K). MR is the load-bearing alpha; bot signal is
+    # additive (+10K on top), not a replacement. Don't re-explore.
+    CONVICTION_AMP = 1.0
 
 
-def _ingest_velvet_event(market_trades, velvet_event_box: List[float]) -> None:
-    """Update VELVET event EWMA from market_trades at this tick.
-    Mark 67 buy print → +qty, Mark 49 sell print → −qty.
-    velvet_event_box is a 1-element list (mutable container)."""
+def _ingest_velvet_event_aggressive(market_trades, order_depths,
+                                    velvet_event_box: List[float]) -> None:
+    """Sharpened ingest: classify each VELVET trade as aggressive or at-mid
+    using the current order_depths mid as reference, weight aggressive prints
+    fully and at-mid prints by AT_MID_WEIGHT. Optionally fold in Mark 14."""
     if not market_trades:
         return
     velvet_trades = market_trades.get("VELVETFRUIT_EXTRACT")
     if not velvet_trades:
         return
+    od = order_depths.get("VELVETFRUIT_EXTRACT")
+    mid_now = _micro_mid(od) if od is not None else None
     for t in velvet_trades:
         buyer = getattr(t, "buyer", None)
         seller = getattr(t, "seller", None)
         qty = getattr(t, "quantity", 0)
-        if buyer == "Mark 67":
-            velvet_event_box[0] += qty
-        if seller == "Mark 49":
-            velvet_event_box[0] -= qty
-        # Mirror events (Mark 67 sell / Mark 49 buy) shouldn't happen given
-        # their archetypes, but if they do they invert the contribution.
+        price = float(getattr(t, "price", 0))
+        # Classify aggressiveness: aggressive_buy if price > mid (buyer
+        # lifted ask); aggressive_sell if price < mid; at_mid otherwise.
+        if mid_now is not None and price > mid_now + 0.5:
+            agg_side = "buy"
+            wt = 1.0
+        elif mid_now is not None and price < mid_now - 0.5:
+            agg_side = "sell"
+            wt = 1.0
+        else:
+            agg_side = None  # at-mid: assign by counterparty role below
+            wt = BotEventParams.AT_MID_WEIGHT
+        # Mark 67 / Mark 49 contribution
+        if buyer == "Mark 67" or seller == "Mark 49":
+            # Both are "long-bullish" events; aggressive lifts especially so.
+            sign = 1.0 if (agg_side != "sell") else -1.0  # rare: 67 sell = -
+            if buyer == "Mark 67":
+                velvet_event_box[0] += sign * qty * wt
+            if seller == "Mark 49":
+                velvet_event_box[0] += sign * qty * wt
         if seller == "Mark 67":
-            velvet_event_box[0] -= qty
+            velvet_event_box[0] -= qty * wt
         if buyer == "Mark 49":
-            velvet_event_box[0] += qty
+            velvet_event_box[0] -= qty * wt
+        # Mark 14 mirror (configurable). Mark 14 sells VELVET → bearish.
+        m14_w = BotEventParams.M14_WEIGHT
+        if m14_w > 0:
+            if buyer == "Mark 14":
+                velvet_event_box[0] += qty * wt * m14_w
+            elif seller == "Mark 14":
+                velvet_event_box[0] -= qty * wt * m14_w
 
 
 # ---------------------------------------------------------------------------
@@ -373,10 +409,11 @@ class Trader:
         trend_sign = td.get("tsign", {})
         # Bot-event signal (VELVET only). Per-tick decay then ingest new prints.
         velvet_event_box = [float(td.get("vev", 0.0))]
-        if BotFlowParams.HALF_LIFE > 0:
-            decay = 0.5 ** (1.0 / BotFlowParams.HALF_LIFE)
+        if BotEventParams.HALF_LIFE > 0:
+            decay = 0.5 ** (1.0 / BotEventParams.HALF_LIFE)
             velvet_event_box[0] *= decay
-        _ingest_velvet_event(state.market_trades, velvet_event_box)
+        _ingest_velvet_event_aggressive(state.market_trades,
+                                        state.order_depths, velvet_event_box)
 
         # Refresh avg_entry from own_trades (only HYD/VEL use profit_decay)
         for P in (HydrogelParams, VelvetParams):
@@ -413,17 +450,31 @@ class Trader:
                                       avg_entry, prev_fv, var_ewma,
                                       prev_book, ofi_ewma, trend,
                                       fast_ema, trend_age, trend_sign)
-                # Bot-event bias on VELVET: recent Mark 67 buy / Mark 49 sell
-                # prints, EWMA-decayed. Lead-lag analysis shows +2 mid impact
-                # at h=1, persistent through h=100, so bias the target along
-                # the recent event signal.
-                if BotFlowParams.VELVET_EVENT_GAIN != 0:
-                    raw_bias = BotFlowParams.VELVET_EVENT_GAIN * velvet_event_box[0]
-                    cap = BotFlowParams.SIGNAL_CAP
-                    bias = max(-cap, min(cap, raw_bias))
+                # Bot-event AGGRESSIVE: when |signal| above SIGNAL_THRESH,
+                # convert to ±POS_LIMIT target via piecewise-linear conviction:
+                #   conviction = clip(signal / SIGNAL_FULL, -1, +1)
+                #   sig_target = round(conviction * POS_LIMIT)
+                # Combine with MR target by max-conviction (whichever has
+                # greater |target| in the direction of the signal). Re-emit
+                # orders with the new target.
+                signal_val = velvet_event_box[0]
+                if abs(signal_val) >= BotEventParams.SIGNAL_THRESH:
+                    conv = signal_val / max(1e-6, BotEventParams.SIGNAL_FULL)
+                    conv = max(-1.0, min(1.0, conv))
+                    sig_target = int(round(conv * VelvetParams.POS_LIMIT))
+                    mode = BotEventParams.COMBINE_MODE
+                    if mode == "blend":
+                        # Conviction-weighted: signal weight scales with |conv|.
+                        # CONVICTION_AMP > 1 makes even small signals weigh heavily.
+                        w = min(1.0, abs(conv) * BotEventParams.CONVICTION_AMP)
+                        new_target = int(round(w * sig_target + (1 - w) * tp))
+                    elif mode == "max_mag":
+                        # Whichever target has bigger magnitude wins.
+                        new_target = sig_target if abs(sig_target) > abs(tp) else tp
+                    else:  # "override"
+                        new_target = sig_target
                     new_target = max(-VelvetParams.POS_LIMIT,
-                                     min(VelvetParams.POS_LIMIT,
-                                         tp + int(round(bias))))
+                                     min(VelvetParams.POS_LIMIT, new_target))
                     if new_target != tp:
                         tp = new_target
                         orders = self._exec(state, VelvetParams, velvet_mid, tp)
