@@ -84,6 +84,11 @@ class HydrogelParams:
     # Baseline passive quote size on the "wrong" side. Full POS_LIMIT
     # capacity reserved for the side target wants to load.
     BASE_QTY = 10
+    # Aggressive-cross cap: limit Phase-1 crossings to (target - pos) +
+    # AGG_OVERSHOOT. Without this, on tight-spread strikes we'd over-fill
+    # past target via opportunistic crossings. LOOCV sweep: 10 wins held-out
+    # D3, broad plateau 0-10. Disable with very large value.
+    AGG_OVERSHOOT = 10
 
 
 class VelvetParams:
@@ -119,6 +124,7 @@ class VelvetParams:
     OFI_GAIN = 1.0
     OFI_SPAN = 20
     BASE_QTY = 10
+    AGG_OVERSHOOT = 10
 
 
 # ---- Voucher trading: 8 strikes, all using adaptive TV + VEL spillover ----
@@ -140,6 +146,7 @@ class VelvetParams:
 class _VevBase:
     POS_LIMIT = 300
     MIN_SAMPLES = 100
+    AGG_OVERSHOOT = 10
     # Delta-regression fair-value model:
     #   fair = alpha_t + DELTA * velvet_mid
     #   alpha_t = EWMA(vev_mid - DELTA * velvet_mid, span=ALPHA_SPAN)
@@ -622,15 +629,27 @@ class Trader:
         buy_cap = P.POS_LIMIT - pos
         sell_cap = P.POS_LIMIT + pos
 
+        # Cap aggressive cross by target distance (with small overshoot).
+        # Without this, on tight-spread low-delta vouchers (e.g. VEV_5400
+        # target maxes at ±146 of POS_LIMIT 300), aggressive Phase-1
+        # crossing accumulates pos all the way to ±300 even though the
+        # signal only justifies ±146. The overshoot allowance keeps us
+        # taking opportunistic +EV crossings.
+        agg_over = getattr(P, "AGG_OVERSHOOT", 50)
+        agg_buy_cap = max(0, min(buy_cap, (target_pos - pos) + agg_over))
+        agg_sell_cap = max(0, min(sell_cap, (pos - target_pos) + agg_over))
+
         for price in sorted(od.sell_orders.keys()):
-            if price < fv_eff and buy_cap > 0:
-                qty = min(-od.sell_orders[price], buy_cap)
+            if price < fv_eff and agg_buy_cap > 0:
+                qty = min(-od.sell_orders[price], agg_buy_cap)
                 orders.append(Order(P.SYMBOL, price, qty))
+                agg_buy_cap -= qty
                 buy_cap -= qty
         for price in sorted(od.buy_orders.keys(), reverse=True):
-            if price > fv_eff and sell_cap > 0:
-                qty = min(od.buy_orders[price], sell_cap)
+            if price > fv_eff and agg_sell_cap > 0:
+                qty = min(od.buy_orders[price], agg_sell_cap)
                 orders.append(Order(P.SYMBOL, price, -qty))
+                agg_sell_cap -= qty
                 sell_cap -= qty
 
         base_bid = best_bid + 1
@@ -647,9 +666,17 @@ class Trader:
         # Size passive quotes by target deviation, not full position-limit
         # capacity. Prevents the bid from absorbing market sells when target
         # says shrink (and vice versa). BASE_QTY keeps a baseline both sides.
+        # For low-delta vouchers (e.g. VEV_5400 DELTA=0.16), the spillover
+        # target maxes at ~146 (well below POS_LIMIT 300), but the unscaled
+        # BASE_QTY=15 still posts every tick and accumulates 150 lots past
+        # target via passive fills on tight-spread strikes. Scaling base by
+        # DELTA caps the over-fill in proportion to the strike's actual
+        # signal magnitude.
         base = getattr(P, "BASE_QTY", 10)
-        bid_qty = min(buy_cap, max(0, target_pos - pos) + base)
-        ask_qty = min(sell_cap, max(0, pos - target_pos) + base)
+        delta_scale = getattr(P, "DELTA", 1.0)
+        eff_base = max(2, int(round(base * delta_scale)))
+        bid_qty = min(buy_cap, max(0, target_pos - pos) + eff_base)
+        ask_qty = min(sell_cap, max(0, pos - target_pos) + eff_base)
 
         if bid_qty > 0:
             orders.append(Order(P.SYMBOL, our_bid, bid_qty))
