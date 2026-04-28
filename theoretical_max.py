@@ -11,12 +11,21 @@ import csv
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent / "data"
-POS_LIMIT = 80
+DEFAULT_POS_LIMIT = 80
 ROLLING_WINDOW = 20
 FILTER_TOLERANCE = 0  # pts of slack for the rolling-mid filter (auto-calibrated if 0)
 
+# Per-product position limits (overrides DEFAULT_POS_LIMIT if matched)
+PRODUCT_LIMITS = {
+    "HYDROGEL_PACK": 200, "VELVETFRUIT_EXTRACT": 200,
+    "VEV_4000": 300, "VEV_4500": 300, "VEV_5000": 300, "VEV_5100": 300,
+    "VEV_5200": 300, "VEV_5300": 300, "VEV_5400": 300, "VEV_5500": 300,
+    "VEV_6000": 300, "VEV_6500": 300,
+}
+
 
 def compute_max_pnl(prices_path: Path, product: str, filter_outliers: bool = True) -> dict:
+    pos_limit = PRODUCT_LIMITS.get(product, DEFAULT_POS_LIMIT)
     with open(prices_path, newline="") as f:
         reader = csv.DictReader(f, delimiter=";")
         rows = [r for r in reader if r["product"] == product]
@@ -44,10 +53,10 @@ def compute_max_pnl(prices_path: Path, product: str, filter_outliers: bool = Tru
             tolerance = sorted(spreads)[len(spreads) // 2] / 2
 
     # --- DP ---
-    size = 2 * POS_LIMIT + 1
+    size = 2 * pos_limit + 1
     INF = float("-inf")
     dp = [INF] * size
-    dp[POS_LIMIT] = 0.0  # start at position 0
+    dp[pos_limit] = 0.0  # start at position 0
 
     filtered_count = 0
 
@@ -84,19 +93,19 @@ def compute_max_pnl(prices_path: Path, product: str, filter_outliers: bool = Tru
         for p_idx in range(size):
             if dp[p_idx] == INF:
                 continue
-            pos = p_idx - POS_LIMIT
+            pos = p_idx - pos_limit
             base_pnl = dp[p_idx]
 
             # Buy from asks (ascending price)
             cum_cost = 0.0
             cum_qty = 0
             for ask_px, ask_vol in sorted(sells):
-                can_buy = min(ask_vol, POS_LIMIT - pos - cum_qty)
+                can_buy = min(ask_vol, pos_limit - pos - cum_qty)
                 if can_buy <= 0:
                     break
                 cum_qty += can_buy
                 cum_cost += ask_px * can_buy
-                new_idx = pos + cum_qty + POS_LIMIT
+                new_idx = pos + cum_qty + pos_limit
                 val = base_pnl - cum_cost
                 if val > new_dp[new_idx]:
                     new_dp[new_idx] = val
@@ -105,12 +114,12 @@ def compute_max_pnl(prices_path: Path, product: str, filter_outliers: bool = Tru
             cum_rev = 0.0
             cum_qty = 0
             for bid_px, bid_vol in sorted(buys, reverse=True):
-                can_sell = min(bid_vol, POS_LIMIT + pos - cum_qty)
+                can_sell = min(bid_vol, pos_limit + pos - cum_qty)
                 if can_sell <= 0:
                     break
                 cum_qty += can_sell
                 cum_rev += bid_px * can_sell
-                new_idx = pos - cum_qty + POS_LIMIT
+                new_idx = pos - cum_qty + pos_limit
                 val = base_pnl + cum_rev
                 if val > new_dp[new_idx]:
                     new_dp[new_idx] = val
@@ -129,7 +138,7 @@ def compute_max_pnl(prices_path: Path, product: str, filter_outliers: bool = Tru
     for p_idx in range(size):
         if dp[p_idx] == INF:
             continue
-        pos = p_idx - POS_LIMIT
+        pos = p_idx - pos_limit
         total = dp[p_idx] + pos * last_mid
         if total > best_pnl:
             best_pnl = total
@@ -175,7 +184,7 @@ def main():
 
     tol_str = f", tolerance={FILTER_TOLERANCE}" if FILTER_TOLERANCE > 0 else ", tolerance=auto (half median spread)"
     mode = f"filtered{tol_str}" if filter_on else "raw (no filter)"
-    print(f"Round {args.round}, pos limit {POS_LIMIT}, mode: {mode}")
+    print(f"Round {args.round}, per-product limits: {PRODUCT_LIMITS} (default {DEFAULT_POS_LIMIT}), mode: {mode}")
     print(f"Products: {products}")
     print()
 
