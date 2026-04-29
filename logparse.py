@@ -2,6 +2,8 @@ import json
 import csv
 import io
 from pathlib import Path
+import matplotlib
+matplotlib.use("Agg")  # no GUI display
 import matplotlib.pyplot as plt
 
 subnum = input("Subnum:")
@@ -116,73 +118,97 @@ def plot_price(ax, product, annotate_qty=True):
 
 
 # ---------------------------------------------------------------------------
-# Figure 1 + 2: delta-1 assets, each in their own window
+# Round 5 categories: one PnL figure per category, 5 product curves overlaid
 # ---------------------------------------------------------------------------
-DELTA1 = ["HYDROGEL_PACK", "VELVETFRUIT_EXTRACT"]
+CATEGORIES = {
+    "Galaxy_Sounds_Recorders": [
+        "GALAXY_SOUNDS_DARK_MATTER", "GALAXY_SOUNDS_BLACK_HOLES",
+        "GALAXY_SOUNDS_PLANETARY_RINGS", "GALAXY_SOUNDS_SOLAR_WINDS",
+        "GALAXY_SOUNDS_SOLAR_FLAMES",
+    ],
+    "Vertical_Sleeping_Pods": [
+        "SLEEP_POD_SUEDE", "SLEEP_POD_LAMB_WOOL", "SLEEP_POD_POLYESTER",
+        "SLEEP_POD_NYLON", "SLEEP_POD_COTTON",
+    ],
+    "Organic_Microchips": [
+        "MICROCHIP_CIRCLE", "MICROCHIP_OVAL", "MICROCHIP_SQUARE",
+        "MICROCHIP_RECTANGLE", "MICROCHIP_TRIANGLE",
+    ],
+    "Purification_Pebbles": [
+        "PEBBLES_XS", "PEBBLES_S", "PEBBLES_M", "PEBBLES_L", "PEBBLES_XL",
+    ],
+    "Domestic_Robots": [
+        "ROBOT_VACUUMING", "ROBOT_MOPPING", "ROBOT_DISHES",
+        "ROBOT_LAUNDRY", "ROBOT_IRONING",
+    ],
+    "UV_Visors": [
+        "UV_VISOR_YELLOW", "UV_VISOR_AMBER", "UV_VISOR_ORANGE",
+        "UV_VISOR_RED", "UV_VISOR_MAGENTA",
+    ],
+    "Instant_Translators": [
+        "TRANSLATOR_SPACE_GRAY", "TRANSLATOR_ASTRO_BLACK",
+        "TRANSLATOR_ECLIPSE_CHARCOAL", "TRANSLATOR_GRAPHITE_MIST",
+        "TRANSLATOR_VOID_BLUE",
+    ],
+    "Construction_Panels": [
+        "PANEL_1X2", "PANEL_2X2", "PANEL_1X4", "PANEL_2X4", "PANEL_4X4",
+    ],
+    "Liquid_Breath_Oxygen_Shakes": [
+        "OXYGEN_SHAKE_MORNING_BREATH", "OXYGEN_SHAKE_EVENING_BREATH",
+        "OXYGEN_SHAKE_MINT", "OXYGEN_SHAKE_CHOCOLATE", "OXYGEN_SHAKE_GARLIC",
+    ],
+    "Protein_Snack_Packs": [
+        "SNACKPACK_CHOCOLATE", "SNACKPACK_VANILLA", "SNACKPACK_PISTACHIO",
+        "SNACKPACK_STRAWBERRY", "SNACKPACK_RASPBERRY",
+    ],
+}
+
 saved_paths = []
 
-for product in DELTA1:
-    if product not in pnl:
+
+def plot_product_panel(ax, product):
+    """Price + buy/sell marks (left axis), PnL curve (right axis)."""
+    plot_price(ax, product, annotate_qty=True)
+    final_pnl = 0.0
+    if product in pnl:
+        xs, ys = pnl[product]
+        ax_r = ax.twinx()
+        ax_r.plot(xs, ys, color="purple", linewidth=1.1,
+                  alpha=0.85, label="PnL", zorder=5)
+        ax_r.set_ylabel("P&L", color="purple")
+        ax_r.tick_params(axis="y", labelcolor="purple")
+        if ys:
+            final_pnl = ys[-1]
+    ax.set_title(f"{product}  (PnL {final_pnl:+.0f})", fontsize=10)
+    return final_pnl
+
+
+for cat_name, products in CATEGORIES.items():
+    present = [p for p in products if p in pnl]
+    if not present:
         continue
-    fig, (ax_pnl, ax_price) = plt.subplots(1, 2, figsize=(14, 5))
-    plot_pnl(ax_pnl, product)
-    plot_price(ax_price, product, annotate_qty=True)
-    fig.suptitle(f"{product} — Submission {subnum}", fontsize=13)
-    fig.tight_layout()
-    out = dd / f"{subnum}_{product}.png"
-    fig.savefig(out, dpi=150)
-    saved_paths.append(out)
 
+    ncols = len(products)  # always 5 for R5
+    fig, axes = plt.subplots(1, ncols, figsize=(4.6 * ncols, 4.2),
+                             squeeze=False)
+    finals = {}
+    for i, p in enumerate(products):
+        ax = axes[0][i]
+        if p in pnl or p in prices or p in mid:
+            finals[p] = plot_product_panel(ax, p)
+        else:
+            ax.set_title(f"{p}  (no data)", fontsize=10)
+            ax.axis("off")
 
-# ---------------------------------------------------------------------------
-# Figure 3: VEV vouchers — price panels arranged by strike
-# ---------------------------------------------------------------------------
-STRIKES = {
-    "VEV_4000": 4000, "VEV_4500": 4500, "VEV_5000": 5000, "VEV_5100": 5100,
-    "VEV_5200": 5200, "VEV_5300": 5300, "VEV_5400": 5400, "VEV_5500": 5500,
-    "VEV_6000": 6000, "VEV_6500": 6500,
-}
-vouchers = [v for v in STRIKES if v in pnl]
-vouchers.sort(key=lambda v: STRIKES[v])
+    total = sum(finals.values())
+    fig.suptitle(f"{cat_name.replace('_', ' ')} — Submission {subnum}  "
+                 f"(Category PnL: {total:+.0f})", fontsize=13)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
 
-if vouchers:
-    n = len(vouchers)
-    # 2 rows x 5 cols for 10 vouchers (or fewer); fall back for smaller n.
-    ncols = 5 if n > 5 else n
-    nrows = (n + ncols - 1) // ncols
-
-    # Price grid
-    fig_p, axes_p = plt.subplots(nrows, ncols,
-                                 figsize=(4 * ncols, 3.2 * nrows),
-                                 squeeze=False)
-    for i, v in enumerate(vouchers):
-        ax = axes_p[i // ncols][i % ncols]
-        plot_price(ax, v, annotate_qty=False)
-        ax.set_title(f"{v} (K={STRIKES[v]}) Price", fontsize=10)
-    for i in range(n, nrows * ncols):
-        axes_p[i // ncols][i % ncols].axis("off")
-    fig_p.suptitle(f"VEV Vouchers Price — Submission {subnum}", fontsize=13)
-    fig_p.tight_layout()
-    out = dd / f"{subnum}_vouchers_price.png"
-    fig_p.savefig(out, dpi=150)
-    saved_paths.append(out)
-
-    # PnL grid
-    fig_q, axes_q = plt.subplots(nrows, ncols,
-                                 figsize=(4 * ncols, 3.2 * nrows),
-                                 squeeze=False)
-    for i, v in enumerate(vouchers):
-        ax = axes_q[i // ncols][i % ncols]
-        plot_pnl(ax, v)
-        ax.set_title(f"{v} (K={STRIKES[v]}) PnL", fontsize=10)
-    for i in range(n, nrows * ncols):
-        axes_q[i // ncols][i % ncols].axis("off")
-    fig_q.suptitle(f"VEV Vouchers PnL — Submission {subnum}", fontsize=13)
-    fig_q.tight_layout()
-    out = dd / f"{subnum}_vouchers_pnl.png"
-    fig_q.savefig(out, dpi=150)
+    out = dd / f"{subnum}_{cat_name}.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
     saved_paths.append(out)
 
 for p in saved_paths:
     print(f"saved {p}")
-plt.show()
