@@ -1,0 +1,4 @@
+day,n_ticks,arb_sell_fires,arb_sell_pct,arb_buy_fires,arb_buy_pct,max_sum_bb_minus,min_sum_ba_minus
+2,10000,0,0.0,160,1.6,-1,-4
+3,10000,0,0.0,135,1.35,-1,-4
+4,10000,0,0.0,152,1.52,-1,-4
