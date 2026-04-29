@@ -1,0 +1,233 @@
+=== Round 5 ！ patterns for 8 non-basket categories ===
+40 products 〜 3 days = 120 rows
+
+--- Spread (avg over days), highest first ---
+  spread=15.05  mm_edge「13.05/RT  OXYGEN_SHAKE   OXYGEN_SHAKE_GARLIC
+  spread=14.51  mm_edge「12.51/RT  GALAXY_SOUNDS  GALAXY_SOUNDS_BLACK_HOLES
+  spread=14.09  mm_edge「12.09/RT  UV_VISOR       UV_VISOR_MAGENTA
+  spread=14.07  mm_edge「12.07/RT  GALAXY_SOUNDS  GALAXY_SOUNDS_SOLAR_FLAMES
+  spread=14.04  mm_edge「12.04/RT  UV_VISOR       UV_VISOR_RED
+  spread=13.91  mm_edge「11.91/RT  UV_VISOR       UV_VISOR_YELLOW
+  spread=13.69  mm_edge「11.69/RT  GALAXY_SOUNDS  GALAXY_SOUNDS_PLANETARY_RINGS
+  spread=13.30  mm_edge「11.30/RT  GALAXY_SOUNDS  GALAXY_SOUNDS_SOLAR_WINDS
+  spread=13.28  mm_edge「11.28/RT  UV_VISOR       UV_VISOR_ORANGE
+  spread=13.05  mm_edge「11.05/RT  GALAXY_SOUNDS  GALAXY_SOUNDS_DARK_MATTER
+  spread=12.78  mm_edge「10.78/RT  OXYGEN_SHAKE   OXYGEN_SHAKE_MORNING_BREATH
+  spread=12.59  mm_edge「10.59/RT  OXYGEN_SHAKE   OXYGEN_SHAKE_MINT
+  spread=12.19  mm_edge「10.19/RT  OXYGEN_SHAKE   OXYGEN_SHAKE_CHOCOLATE
+  spread=11.86  mm_edge「 9.86/RT  OXYGEN_SHAKE   OXYGEN_SHAKE_EVENING_BREATH
+  spread=11.72  mm_edge「 9.72/RT  MICROCHIP      MICROCHIP_SQUARE
+  spread=11.51  mm_edge「 9.51/RT  PANEL          PANEL_1X2
+  spread=10.32  mm_edge「 8.32/RT  UV_VISOR       UV_VISOR_AMBER
+  spread=10.30  mm_edge「 8.30/RT  SLEEP_POD      SLEEP_POD_POLYESTER
+  spread=10.05  mm_edge「 8.05/RT  SLEEP_POD      SLEEP_POD_COTTON
+  spread= 9.95  mm_edge「 7.95/RT  SLEEP_POD      SLEEP_POD_SUEDE
+  spread= 9.84  mm_edge「 7.84/RT  PANEL          PANEL_2X4
+  spread= 9.52  mm_edge「 7.52/RT  TRANSLATOR     TRANSLATOR_VOID_BLUE
+  spread= 9.40  mm_edge「 7.40/RT  SLEEP_POD      SLEEP_POD_LAMB_WOOL
+  spread= 8.91  mm_edge「 6.91/RT  TRANSLATOR     TRANSLATOR_GRAPHITE_MIST
+  spread= 8.75  mm_edge「 6.75/RT  PANEL          PANEL_4X4
+  spread= 8.70  mm_edge「 6.70/RT  TRANSLATOR     TRANSLATOR_ECLIPSE_CHARCOAL
+  spread= 8.64  mm_edge「 6.64/RT  MICROCHIP      MICROCHIP_TRIANGLE
+  spread= 8.56  mm_edge「 6.56/RT  SLEEP_POD      SLEEP_POD_NYLON
+  spread= 8.52  mm_edge「 6.52/RT  PANEL          PANEL_2X2
+  spread= 8.40  mm_edge「 6.40/RT  TRANSLATOR     TRANSLATOR_SPACE_GRAY
+  spread= 8.38  mm_edge「 6.38/RT  PANEL          PANEL_1X4
+  spread= 8.37  mm_edge「 6.37/RT  TRANSLATOR     TRANSLATOR_ASTRO_BLACK
+  spread= 8.26  mm_edge「 6.26/RT  MICROCHIP      MICROCHIP_CIRCLE
+  spread= 7.97  mm_edge「 5.97/RT  ROBOT          ROBOT_MOPPING
+  spread= 7.89  mm_edge「 5.89/RT  MICROCHIP      MICROCHIP_RECTANGLE
+  spread= 7.45  mm_edge「 5.45/RT  MICROCHIP      MICROCHIP_OVAL
+  spread= 7.35  mm_edge「 5.35/RT  ROBOT          ROBOT_DISHES
+  spread= 7.17  mm_edge「 5.17/RT  ROBOT          ROBOT_LAUNDRY
+  spread= 6.75  mm_edge「 4.75/RT  ROBOT          ROBOT_VACUUMING
+  spread= 6.39  mm_edge「 4.39/RT  ROBOT          ROBOT_IRONING
+
+--- Lag-1 autocorrelation of returns (most-MR first) ---
+  ac1=-0.118  MR (good for passive MM)        ROBOT          ROBOT_IRONING
+  ac1=-0.115  MR (good for passive MM)        OXYGEN_SHAKE   OXYGEN_SHAKE_EVENING_BREATH
+  ac1=-0.098  MR (good for passive MM)        ROBOT          ROBOT_DISHES
+  ac1=-0.080  MR (good for passive MM)        OXYGEN_SHAKE   OXYGEN_SHAKE_CHOCOLATE
+  ac1=-0.024  random walk                     MICROCHIP      MICROCHIP_SQUARE
+  ac1=-0.016  random walk                     GALAXY_SOUNDS  GALAXY_SOUNDS_BLACK_HOLES
+  ac1=-0.012  random walk                     GALAXY_SOUNDS  GALAXY_SOUNDS_SOLAR_FLAMES
+  ac1=-0.012  random walk                     GALAXY_SOUNDS  GALAXY_SOUNDS_DARK_MATTER
+  ac1=-0.012  random walk                     ROBOT          ROBOT_MOPPING
+  ac1=-0.010  random walk                     PANEL          PANEL_2X2
+  ac1=-0.009  random walk                     TRANSLATOR     TRANSLATOR_VOID_BLUE
+  ac1=-0.008  random walk                     ROBOT          ROBOT_VACUUMING
+  ac1=-0.008  random walk                     MICROCHIP      MICROCHIP_TRIANGLE
+  ac1=-0.008  random walk                     GALAXY_SOUNDS  GALAXY_SOUNDS_SOLAR_WINDS
+  ac1=-0.008  random walk                     MICROCHIP      MICROCHIP_OVAL
+  ac1=-0.008  random walk                     TRANSLATOR     TRANSLATOR_ECLIPSE_CHARCOAL
+  ac1=-0.007  random walk                     TRANSLATOR     TRANSLATOR_ASTRO_BLACK
+  ac1=-0.006  random walk                     PANEL          PANEL_4X4
+  ac1=-0.006  random walk                     SLEEP_POD      SLEEP_POD_SUEDE
+  ac1=-0.006  random walk                     OXYGEN_SHAKE   OXYGEN_SHAKE_MORNING_BREATH
+  ac1=-0.005  random walk                     MICROCHIP      MICROCHIP_CIRCLE
+  ac1=-0.004  random walk                     GALAXY_SOUNDS  GALAXY_SOUNDS_PLANETARY_RINGS
+  ac1=-0.004  random walk                     UV_VISOR       UV_VISOR_RED
+  ac1=-0.004  random walk                     UV_VISOR       UV_VISOR_AMBER
+  ac1=-0.003  random walk                     UV_VISOR       UV_VISOR_MAGENTA
+  ac1=-0.003  random walk                     OXYGEN_SHAKE   OXYGEN_SHAKE_GARLIC
+  ac1=-0.003  random walk                     TRANSLATOR     TRANSLATOR_GRAPHITE_MIST
+  ac1=-0.003  random walk                     OXYGEN_SHAKE   OXYGEN_SHAKE_MINT
+  ac1=-0.003  random walk                     SLEEP_POD      SLEEP_POD_COTTON
+  ac1=-0.003  random walk                     PANEL          PANEL_1X2
+  ac1=-0.003  random walk                     MICROCHIP      MICROCHIP_RECTANGLE
+  ac1=-0.002  random walk                     PANEL          PANEL_1X4
+  ac1=-0.001  random walk                     SLEEP_POD      SLEEP_POD_POLYESTER
+  ac1=-0.001  random walk                     PANEL          PANEL_2X4
+  ac1=+0.001  random walk                     SLEEP_POD      SLEEP_POD_NYLON
+  ac1=+0.001  random walk                     UV_VISOR       UV_VISOR_ORANGE
+  ac1=+0.003  random walk                     UV_VISOR       UV_VISOR_YELLOW
+  ac1=+0.003  random walk                     SLEEP_POD      SLEEP_POD_LAMB_WOOL
+  ac1=+0.006  random walk                     ROBOT          ROBOT_LAUNDRY
+  ac1=+0.008  random walk                     TRANSLATOR     TRANSLATOR_SPACE_GRAY
+
+--- Variance ratio k=20 (smaller = more MR) ---
+  vr20=0.731  OXYGEN_SHAKE   OXYGEN_SHAKE_EVENING_BREATH
+  vr20=0.744  ROBOT          ROBOT_IRONING
+  vr20=0.768  ROBOT          ROBOT_DISHES
+  vr20=0.847  OXYGEN_SHAKE   OXYGEN_SHAKE_CHOCOLATE
+  vr20=0.914  OXYGEN_SHAKE   OXYGEN_SHAKE_MORNING_BREATH
+  vr20=0.917  ROBOT          ROBOT_MOPPING
+  vr20=0.947  TRANSLATOR     TRANSLATOR_VOID_BLUE
+  vr20=0.950  PANEL          PANEL_1X4
+  vr20=0.956  ROBOT          ROBOT_VACUUMING
+  vr20=0.956  PANEL          PANEL_2X2
+  vr20=0.962  TRANSLATOR     TRANSLATOR_ECLIPSE_CHARCOAL
+  vr20=0.966  SLEEP_POD      SLEEP_POD_SUEDE
+  vr20=0.976  MICROCHIP      MICROCHIP_TRIANGLE
+  vr20=0.977  UV_VISOR       UV_VISOR_YELLOW
+  vr20=0.977  MICROCHIP      MICROCHIP_OVAL
+  vr20=0.978  UV_VISOR       UV_VISOR_RED
+  vr20=0.983  TRANSLATOR     TRANSLATOR_GRAPHITE_MIST
+  vr20=0.987  MICROCHIP      MICROCHIP_CIRCLE
+  vr20=0.990  MICROCHIP      MICROCHIP_SQUARE
+  vr20=0.992  TRANSLATOR     TRANSLATOR_SPACE_GRAY
+  vr20=0.995  SLEEP_POD      SLEEP_POD_POLYESTER
+  vr20=0.995  SLEEP_POD      SLEEP_POD_NYLON
+  vr20=0.996  PANEL          PANEL_2X4
+  vr20=1.005  OXYGEN_SHAKE   OXYGEN_SHAKE_MINT
+  vr20=1.007  PANEL          PANEL_1X2
+  vr20=1.007  UV_VISOR       UV_VISOR_AMBER
+  vr20=1.009  GALAXY_SOUNDS  GALAXY_SOUNDS_DARK_MATTER
+  vr20=1.010  UV_VISOR       UV_VISOR_MAGENTA
+  vr20=1.013  PANEL          PANEL_4X4
+  vr20=1.017  GALAXY_SOUNDS  GALAXY_SOUNDS_PLANETARY_RINGS
+  vr20=1.018  GALAXY_SOUNDS  GALAXY_SOUNDS_SOLAR_FLAMES
+  vr20=1.022  TRANSLATOR     TRANSLATOR_ASTRO_BLACK
+  vr20=1.023  SLEEP_POD      SLEEP_POD_COTTON
+  vr20=1.026  GALAXY_SOUNDS  GALAXY_SOUNDS_BLACK_HOLES
+  vr20=1.028  GALAXY_SOUNDS  GALAXY_SOUNDS_SOLAR_WINDS
+  vr20=1.037  MICROCHIP      MICROCHIP_RECTANGLE
+  vr20=1.051  ROBOT          ROBOT_LAUNDRY
+  vr20=1.053  OXYGEN_SHAKE   OXYGEN_SHAKE_GARLIC
+  vr20=1.064  SLEEP_POD      SLEEP_POD_LAMB_WOOL
+  vr20=1.073  UV_VISOR       UV_VISOR_ORANGE
+
+--- Drift sign consistency ---
+  +++  cons=1.00  drifts=[1446.5, 688.5, 1320.5]  GALAXY_SOUNDS  GALAXY_SOUNDS_BLACK_HOLES
+  ++-  cons=0.67  drifts=[417.0, 462.5, -611.5]  GALAXY_SOUNDS  GALAXY_SOUNDS_DARK_MATTER
+  ++-  cons=0.67  drifts=[1249.0, 158.0, -1767.0]  GALAXY_SOUNDS  GALAXY_SOUNDS_PLANETARY_RINGS
+  +-+  cons=0.67  drifts=[1345.5, -693.5, 180.0]  GALAXY_SOUNDS  GALAXY_SOUNDS_SOLAR_FLAMES
+  -+-  cons=0.67  drifts=[-416.5, 1175.5, -508.5]  GALAXY_SOUNDS  GALAXY_SOUNDS_SOLAR_WINDS
+  --+  cons=0.67  drifts=[-1125.0, -346.5, 1853.5]  MICROCHIP      MICROCHIP_CIRCLE
+  ---  cons=1.00  drifts=[-744.0, -1824.0, -1897.5]  MICROCHIP      MICROCHIP_OVAL
+  --+  cons=0.67  drifts=[-579.5, -1572.5, 941.5]  MICROCHIP      MICROCHIP_RECTANGLE
+  ++-  cons=0.67  drifts=[2455.5, 3438.5, -2278.0]  MICROCHIP      MICROCHIP_SQUARE
+  +--  cons=0.67  drifts=[704.0, -1705.5, -1078.5]  MICROCHIP      MICROCHIP_TRIANGLE
+  --+  cons=0.67  drifts=[-510.0, -158.0, 1390.0]  OXYGEN_SHAKE   OXYGEN_SHAKE_CHOCOLATE
+  -+-  cons=0.67  drifts=[-1570.0, 1000.0, -10.0]  OXYGEN_SHAKE   OXYGEN_SHAKE_EVENING_BREATH
+  +++  cons=1.00  drifts=[1828.5, 111.0, 1958.5]  OXYGEN_SHAKE   OXYGEN_SHAKE_GARLIC
+  +-+  cons=0.67  drifts=[106.5, -390.5, 440.5]  OXYGEN_SHAKE   OXYGEN_SHAKE_MINT
+  +-+  cons=0.67  drifts=[999.5, -1467.0, 18.5]  OXYGEN_SHAKE   OXYGEN_SHAKE_MORNING_BREATH
+  -++  cons=0.67  drifts=[-1568.5, 425.0, 846.5]  PANEL          PANEL_1X2
+  +-+  cons=0.67  drifts=[1065.0, -2372.0, 497.5]  PANEL          PANEL_1X4
+  +-+  cons=0.67  drifts=[111.5, -883.5, 196.0]  PANEL          PANEL_2X2
+  +++  cons=1.00  drifts=[738.0, 738.0, 894.5]  PANEL          PANEL_2X4
+  -+-  cons=0.67  drifts=[-321.5, 573.5, -1127.0]  PANEL          PANEL_4X4
+  -++  cons=0.67  drifts=[-79.0, 218.5, 1077.0]  ROBOT          ROBOT_DISHES
+  --+  cons=0.67  drifts=[-490.0, -2000.0, 330.0]  ROBOT          ROBOT_IRONING
+  +--  cons=0.67  drifts=[252.0, -751.5, -219.0]  ROBOT          ROBOT_LAUNDRY
+  -+-  cons=0.67  drifts=[-179.5, 2352.5, -582.5]  ROBOT          ROBOT_MOPPING
+  +--  cons=0.67  drifts=[64.0, -1466.5, -309.0]  ROBOT          ROBOT_VACUUMING
+  ++-  cons=0.67  drifts=[1123.0, 1075.5, -784.0]  SLEEP_POD      SLEEP_POD_COTTON
+  +++  cons=1.00  drifts=[404.5, 395.5, 16.0]  SLEEP_POD      SLEEP_POD_LAMB_WOOL
+  -++  cons=0.67  drifts=[-1123.0, 828.5, 1020.5]  SLEEP_POD      SLEEP_POD_NYLON
+  ++-  cons=0.67  drifts=[1765.5, 1118.5, -917.0]  SLEEP_POD      SLEEP_POD_POLYESTER
+  ++-  cons=0.67  drifts=[1099.0, 1048.0, -338.0]  SLEEP_POD      SLEEP_POD_SUEDE
+  +--  cons=0.67  drifts=[155.0, -1016.5, -196.5]  TRANSLATOR     TRANSLATOR_ASTRO_BLACK
+  +-+  cons=0.67  drifts=[256.5, -632.0, 111.0]  TRANSLATOR     TRANSLATOR_ECLIPSE_CHARCOAL
+  -+-  cons=0.67  drifts=[-662.5, 1713.0, -1260.5]  TRANSLATOR     TRANSLATOR_GRAPHITE_MIST
+  -+-  cons=0.67  drifts=[-507.0, 637.5, -1689.5]  TRANSLATOR     TRANSLATOR_SPACE_GRAY
+  +-+  cons=0.67  drifts=[1082.0, -425.5, 871.0]  TRANSLATOR     TRANSLATOR_VOID_BLUE
+  ---  cons=1.00  drifts=[-1499.5, -1109.0, -255.0]  UV_VISOR       UV_VISOR_AMBER
+  ++-  cons=0.67  drifts=[1299.5, 254.0, -49.0]  UV_VISOR       UV_VISOR_MAGENTA
+  ++-  cons=0.67  drifts=[154.5, 114.0, -948.0]  UV_VISOR       UV_VISOR_ORANGE
+  +++  cons=1.00  drifts=[842.0, 182.0, 698.0]  UV_VISOR       UV_VISOR_RED
+  ++-  cons=0.67  drifts=[1567.5, 466.0, -1985.5]  UV_VISOR       UV_VISOR_YELLOW
+
+--- |OFI| vs h=50 forward return (most-predictive first) ---
+  ofi_h50=+0.021  OXYGEN_SHAKE   OXYGEN_SHAKE_MINT
+  ofi_h50=+0.019  GALAXY_SOUNDS  GALAXY_SOUNDS_PLANETARY_RINGS
+  ofi_h50=+0.016  SLEEP_POD      SLEEP_POD_LAMB_WOOL
+  ofi_h50=+0.016  PANEL          PANEL_2X2
+  ofi_h50=+0.015  PANEL          PANEL_1X2
+  ofi_h50=+0.015  UV_VISOR       UV_VISOR_MAGENTA
+  ofi_h50=+0.015  UV_VISOR       UV_VISOR_AMBER
+  ofi_h50=+0.011  MICROCHIP      MICROCHIP_TRIANGLE
+  ofi_h50=+0.011  SLEEP_POD      SLEEP_POD_COTTON
+  ofi_h50=+0.011  GALAXY_SOUNDS  GALAXY_SOUNDS_BLACK_HOLES
+  ofi_h50=+0.010  UV_VISOR       UV_VISOR_YELLOW
+  ofi_h50=+0.010  OXYGEN_SHAKE   OXYGEN_SHAKE_CHOCOLATE
+  ofi_h50=+0.009  SLEEP_POD      SLEEP_POD_NYLON
+  ofi_h50=+0.009  OXYGEN_SHAKE   OXYGEN_SHAKE_EVENING_BREATH
+  ofi_h50=+0.009  PANEL          PANEL_2X4
+
+=== Heuristic per-product MM_QTY recommendation ===
+Heuristic: rank by mm_edge 〜 MR-strength 〜 volume
+ score = max(spread-2, 0) 〜 max(0.05 - ac1, 0) 〜 log(1+n_trades)
+
+rank score   spread  ac1    trades  category       product
+   1  8.95  11.86  -0.115     244  OXYGEN_SHAKE   OXYGEN_SHAKE_EVENING_BREATH
+   2  7.27  12.19  -0.080     244  OXYGEN_SHAKE   OXYGEN_SHAKE_CHOCOLATE
+   3  4.54  14.51  -0.016     244  GALAXY_SOUNDS  GALAXY_SOUNDS_BLACK_HOLES
+   4  4.37   7.35  -0.098     244  ROBOT          ROBOT_DISHES
+   5  4.13  14.07  -0.012     244  GALAXY_SOUNDS  GALAXY_SOUNDS_SOLAR_FLAMES
+   6  4.05   6.39  -0.118     244  ROBOT          ROBOT_IRONING
+   7  3.83  15.05  -0.003     244  OXYGEN_SHAKE   OXYGEN_SHAKE_GARLIC
+   8  3.76  11.72  -0.024     190  MICROCHIP      MICROCHIP_SQUARE
+   9  3.75  13.05  -0.012     244  GALAXY_SOUNDS  GALAXY_SOUNDS_DARK_MATTER
+  10  3.59  13.30  -0.008     244  GALAXY_SOUNDS  GALAXY_SOUNDS_SOLAR_WINDS
+  11  3.57  14.04  -0.004     244  UV_VISOR       UV_VISOR_RED
+  12  3.55  14.09  -0.003     244  UV_VISOR       UV_VISOR_MAGENTA
+  13  3.49  13.69  -0.004     244  GALAXY_SOUNDS  GALAXY_SOUNDS_PLANETARY_RINGS
+  14  3.31  12.78  -0.006     244  OXYGEN_SHAKE   OXYGEN_SHAKE_MORNING_BREATH
+  15  3.10  12.59  -0.003     244  OXYGEN_SHAKE   OXYGEN_SHAKE_MINT
+  16  3.07  13.91  +0.003     244  UV_VISOR       UV_VISOR_YELLOW
+  17  3.01  13.28  +0.001     244  UV_VISOR       UV_VISOR_ORANGE
+  18  2.76  11.51  -0.003     244  PANEL          PANEL_1X2
+  19  2.46  10.32  -0.004     244  UV_VISOR       UV_VISOR_AMBER
+  20  2.45   9.52  -0.009     244  TRANSLATOR     TRANSLATOR_VOID_BLUE
+  21  2.44   9.95  -0.006     244  SLEEP_POD      SLEEP_POD_SUEDE
+  22  2.34  10.05  -0.003     244  SLEEP_POD      SLEEP_POD_COTTON
+  23  2.34  10.30  -0.001     244  SLEEP_POD      SLEEP_POD_POLYESTER
+  24  2.21   9.84  -0.001     244  PANEL          PANEL_2X4
+  25  2.16   8.52  -0.010     244  PANEL          PANEL_2X2
+  26  2.12   8.70  -0.008     244  TRANSLATOR     TRANSLATOR_ECLIPSE_CHARCOAL
+  27  2.08   8.75  -0.006     244  PANEL          PANEL_4X4
+  28  2.03   8.91  -0.003     244  TRANSLATOR     TRANSLATOR_GRAPHITE_MIST
+  29  2.03   7.97  -0.012     244  ROBOT          ROBOT_MOPPING
+  30  2.01   8.64  -0.008     190  MICROCHIP      MICROCHIP_TRIANGLE
+  31  1.98   8.37  -0.007     244  TRANSLATOR     TRANSLATOR_ASTRO_BLACK
+  32  1.90   9.40  +0.003     244  SLEEP_POD      SLEEP_POD_LAMB_WOOL
+  33  1.84   8.38  -0.002     244  PANEL          PANEL_1X4
+  34  1.82   8.26  -0.005     190  MICROCHIP      MICROCHIP_CIRCLE
+  35  1.78   8.56  +0.001     244  SLEEP_POD      SLEEP_POD_NYLON
+  36  1.65   7.45  -0.008     190  MICROCHIP      MICROCHIP_OVAL
+  37  1.63   7.89  -0.003     190  MICROCHIP      MICROCHIP_RECTANGLE
+  38  1.52   6.75  -0.008     244  ROBOT          ROBOT_VACUUMING
+  39  1.49   8.40  +0.008     244  TRANSLATOR     TRANSLATOR_SPACE_GRAY
+  40  1.25   7.17  +0.006     244  ROBOT          ROBOT_LAUNDRY

@@ -1,6 +1,8 @@
 dump/
 _pycache_/
-algorithms/_pycache_
+algorithms/_pycache_/
+algorithms/ROUND_5/_pycache_/
+.sweep_cache/
 logs/
 .venv/
 .claude

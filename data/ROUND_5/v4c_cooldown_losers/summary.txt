@@ -1,0 +1,91 @@
+=== v4c per-product loss persistence ===
+Total BT (3 days): $348,792
+
+--- Persistence buckets ---
+  Negative all 3 days (CHRONIC):    2 products
+  Negative 2 of 3 days (MULTI):     6 products
+  Negative 1 of 3 days (INTERMITTENT): 19 products
+  Positive all 3 days (WINNERS):   23 products
+
+--- Bottom 15 by total PnL ---
+  product                         cat        D2       D3       D4    total  neg_days
+  SLEEP_POD_LAMB_WOOL             SLEEP_POD     -4072     -544    -1869    -6485  3
+  ROBOT_DISHES                    ROBOT          -510    -1142    -3709    -5361  3
+  PEBBLES_M                       PEBBLES       +1044     -269    -3273    -2498  2
+  GALAXY_SOUNDS_DARK_MATTER       GALAXY_SOU    -1522    -1672    +1008    -2186  2
+  ROBOT_IRONING                   ROBOT         +1349     +478    -1194     +633  1
+  OXYGEN_SHAKE_MINT               OXYGEN_SHA    -3994    +1261    +3381     +648  1
+  PANEL_1X2                       PANEL          +798     +322     -158     +962  1
+  PEBBLES_XS                      PEBBLES        -356     -240    +2127    +1532  2
+  UV_VISOR_MAGENTA                UV_VISOR      +2620     -576     -498    +1546  2
+  SLEEP_POD_NYLON                 SLEEP_POD      -467     +282    +2334    +2149  1
+  UV_VISOR_RED                    UV_VISOR       -862     -496    +3617    +2259  2
+  MICROCHIP_TRIANGLE              MICROCHIP      +772    -2932    +4475    +2315  1
+  MICROCHIP_RECTANGLE             MICROCHIP     +1746    +1716     -966    +2496  1
+  MICROCHIP_OVAL                  MICROCHIP      -375     +523    +2388    +2536  1
+  PANEL_2X2                       PANEL          +556     +201    +1865    +2622  0
+
+--- Top 15 by total PnL ---
+  product                         cat        D2       D3       D4    total  neg_days
+  PEBBLES_XL                      PEBBLES       +3753   +16138   +17615   +37506  0
+  SNACKPACK_RASPBERRY             SNACKPACK    +13826    +9892   +10089   +33807  0
+  SNACKPACK_CHOCOLATE             SNACKPACK    +13154    +7527    +7320   +28000  0
+  SNACKPACK_STRAWBERRY            SNACKPACK    +17659    +6892    +2915   +27466  0
+  SNACKPACK_VANILLA               SNACKPACK    +10902    +8077    +7589   +26568  0
+  GALAXY_SOUNDS_SOLAR_WINDS       GALAXY_SOU    +1140    +4155    +8429   +13724  0
+  GALAXY_SOUNDS_BLACK_HOLES       GALAXY_SOU    -1338    +5853    +7257   +11772  1
+  SNACKPACK_PISTACHIO             SNACKPACK     +3892    +5077    +1962   +10931  0
+  UV_VISOR_ORANGE                 UV_VISOR      +5264    +2920    +2327   +10511  0
+  PEBBLES_S                       PEBBLES       +5297     -421    +5322   +10198  1
+  UV_VISOR_YELLOW                 UV_VISOR      +4516    +2952    +1521    +8989  0
+  SLEEP_POD_POLYESTER             SLEEP_POD     +2135    +4726    +2061    +8922  0
+  ROBOT_LAUNDRY                   ROBOT         +1185    +4687    +2088    +7960  0
+  OXYGEN_SHAKE_GARLIC             OXYGEN_SHA    +3215    +4162     +411    +7788  0
+  OXYGEN_SHAKE_EVENING_BREATH     OXYGEN_SHA    +1504    +2524    +3286    +7314  0
+
+--- CHRONIC LOSERS (negative all 3 days) ---
+  SLEEP_POD_LAMB_WOOL             SLEEP_POD       total=-6485
+  ROBOT_DISHES                    ROBOT           total=-5361
+
+--- MULTI-DAY LOSERS (2 of 3) ---
+  PEBBLES_M                       PEBBLES         total=-2498  D2/D3/D4=+1044/-269/-3273
+  GALAXY_SOUNDS_DARK_MATTER       GALAXY_SOUNDS   total=-2186  D2/D3/D4=-1522/-1672/+1008
+  PEBBLES_XS                      PEBBLES         total=+1532  D2/D3/D4=-356/-240/+2127
+  UV_VISOR_MAGENTA                UV_VISOR        total=+1546  D2/D3/D4=+2620/-576/-498
+  UV_VISOR_RED                    UV_VISOR        total=+2259  D2/D3/D4=-862/-496/+3617
+  GALAXY_SOUNDS_PLANETARY_RINGS   GALAXY_SOUNDS   total=+4307  D2/D3/D4=+5666/-957/-402
+
+--- Top 10 by negative-fragment count (out of 30) ---
+  SLEEP_POD_LAMB_WOOL             21/30 frags neg  worst=-1672  sumneg=-12580
+  ROBOT_DISHES                    19/30 frags neg  worst=-2504  sumneg=-10754
+  GALAXY_SOUNDS_DARK_MATTER       18/30 frags neg  worst=-1046  sumneg=-7254
+  ROBOT_IRONING                   18/30 frags neg  worst=-708  sumneg=-5891
+  PEBBLES_XS                      16/30 frags neg  worst=-2134  sumneg=-7299
+  UV_VISOR_RED                    15/30 frags neg  worst=-1496  sumneg=-7878
+  OXYGEN_SHAKE_MINT               15/30 frags neg  worst=-1238  sumneg=-7688
+  SLEEP_POD_NYLON                 14/30 frags neg  worst=-1115  sumneg=-4144
+  MICROCHIP_OVAL                  14/30 frags neg  worst=-801  sumneg=-5488
+  PEBBLES_M                       14/30 frags neg  worst=-3490  sumneg=-16203
+
+--- Trade-side behavior (negative day-products only) ---
+  product                         d  buys/sells  qty(b/s)  avg_buy_vs_mid  avg_sell_vs_mid  drift  net  pnl
+  SLEEP_POD_LAMB_WOOL             2   65/59   149/151    +78.48X    +45.64.     +404    -2     -4072
+  OXYGEN_SHAKE_MINT               2   65/59   149/151    -14.02.    -37.47X     +106    -2     -3994
+  ROBOT_DISHES                    4   58/60   142/142     -1.74.    -27.86X    +1077    +0     -3709
+  PEBBLES_M                       4   83/62   236/232    -15.65.    -27.10X     -364    +4     -3273
+  MICROCHIP_TRIANGLE              3   55/49   102/102    -32.28.    -61.03X    -1706    +0     -2932
+  PEBBLES_L                       4   83/62   236/232    +25.75X    +40.48.    -1888    +4     -2015
+  SLEEP_POD_LAMB_WOOL             4   58/60   142/142    -57.98.    -71.14X      +16    +0     -1869
+  GALAXY_SOUNDS_DARK_MATTER       3   69/76   177/177     +9.62X     +0.17.     +462    +0     -1672
+  TRANSLATOR_ECLIPSE_CHARCOAL     3   69/76   177/177     -9.71.    -18.49X     -632    +0     -1554
+  GALAXY_SOUNDS_DARK_MATTER       2   65/59   149/151    -10.20.    -16.11X     +417    -2     -1522
+  GALAXY_SOUNDS_SOLAR_FLAMES      2   65/59   149/151    -24.50.    -29.78X    +1346    -2     -1345
+  GALAXY_SOUNDS_BLACK_HOLES       2   65/59   149/151    -12.84.    -11.39X    +1446    -2     -1338
+  ROBOT_IRONING                   4   58/60   142/142    +29.18X    +20.78.     +330    +0     -1194
+  ROBOT_DISHES                    3   69/76   177/177     +7.83X     +1.37.     +218    +0     -1142
+  MICROCHIP_SQUARE                4   53/55   106/108    +93.70X    +58.66.    -2278    -2     -1000
+  MICROCHIP_RECTANGLE             4   53/55   106/108    -18.57.    -18.56X     +942    -2      -966
+  GALAXY_SOUNDS_PLANETARY_RINGS   3   69/76   177/177    +10.47X     +5.07.     +158    +0      -957
+  TRANSLATOR_SPACE_GRAY           4   58/60   142/142    +90.02X    +83.91.    -1690    +0      -868
+  UV_VISOR_RED                    2   65/59   149/151    +30.00X    +24.75.     +842    -2      -862
+  PANEL_4X4                       2   65/59   149/151     -5.89.    -15.70X     -322    -2      -770
