@@ -2,7 +2,7 @@
 import sys, contextlib, io, importlib.util
 from pathlib import Path
 sys.path.insert(0, '.')
-spec = importlib.util.spec_from_file_location('m', 'algorithms/ROUND_5/round_5_combined_v3.py')
+spec = importlib.util.spec_from_file_location('m', 'algorithms/ROUND_5/round_5_combined_v4.py')
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 import backtester as BT
 reader = BT.DataReader(Path('data'))

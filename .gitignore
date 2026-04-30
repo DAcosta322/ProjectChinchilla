@@ -3,6 +3,8 @@ _pycache_/
 algorithms/_pycache_/
 algorithms/ROUND_5/_pycache_/
 .sweep_cache/
+configs/
+analyze/
 logs/
 .venv/
 .claude

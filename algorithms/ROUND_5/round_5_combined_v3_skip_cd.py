@@ -1,15 +1,14 @@
-"""v3_skip + cooldown only (sign-fixed via buyer/seller fields, ts-deduped).
+"""v3_skip + cooldown (sign-fixed, ts-deduped) + PEBBLES v12 + PISTA-tied-to-STRAW.
 
-Adds 5-tick same-side cooldown after a fill on OTHER_8 products. After we
-sell, block new SELLS for 5 ticks. After we buy, block new BUYS for 5 ticks.
+OTHER_8: cooldown 5 ticks same-side after fill. Sign fix uses t.buyer / t.seller
+fields; ts-dedup uses last_processed_ts to avoid platform's multi-tick own_trades
+refresh bug (sub 554229 evidence).
 
-Two bugs fixed vs original v4f:
-1. Sign convention: Trade.quantity is always positive in IMC. Use t.buyer /
-   t.seller == 'SUBMISSION' to detect direction.
-2. Trade dedup: platform appears to keep state.own_trades alive for multiple
-   ticks (sub 554229 confirmed ALL trades stop at ts=8600 because cooldown
-   gets refreshed on every tick). Track last_processed_ts and only process
-   trades with timestamp > last_processed_ts.
+PEBBLES: v12 from PEBBLES/pebbles_v12.py. Per-leg DEV_GAIN + per-leg MIN_SPREAD
+gating. Standalone PEBBLES BT $122,896 (+$73K vs old dev_XL-only design).
+Per-leg PnL: XS +$6K, S +$16K, M +$15K, L +$10K, XL +$76K.
+
+SNACKPACK: PISTA-tied-to-STRAW (target_PISTA = target[STRAW], ρ=0.91 correlated).
 """
 
 from datamodel import OrderDepth, TradingState, Order
@@ -55,7 +54,38 @@ OTHER_8_SET = set(OTHER_8)
 
 POS_LIMIT = 10
 PEBBLES_BASKET_SUM = 50000
-PEBBLES_DEV_GAIN = 5.0
+
+
+class PB:
+    """PEBBLES v12 params (from PEBBLES/pebbles_v12.py)."""
+    MM_QTY = 7
+    DEV_GAIN_XS = 25.0
+    DEV_GAIN_S = 10.0
+    DEV_GAIN_M = 0.0
+    DEV_GAIN_L = 0.0
+    DEV_GAIN_XL = 25.0
+    BASKET_ARB_QTY = 10
+    MIN_SPREAD_XS = 8
+    MIN_SPREAD_S = 2
+    MIN_SPREAD_M = 14
+    MIN_SPREAD_L = 12
+    MIN_SPREAD_XL = 20
+
+
+_PEB_DEV_GAIN = {
+    "PEBBLES_XS": PB.DEV_GAIN_XS,
+    "PEBBLES_S":  PB.DEV_GAIN_S,
+    "PEBBLES_M":  PB.DEV_GAIN_M,
+    "PEBBLES_L":  PB.DEV_GAIN_L,
+    "PEBBLES_XL": PB.DEV_GAIN_XL,
+}
+_PEB_MIN_SPREAD = {
+    "PEBBLES_XS": PB.MIN_SPREAD_XS,
+    "PEBBLES_S":  PB.MIN_SPREAD_S,
+    "PEBBLES_M":  PB.MIN_SPREAD_M,
+    "PEBBLES_L":  PB.MIN_SPREAD_L,
+    "PEBBLES_XL": PB.MIN_SPREAD_XL,
+}
 
 
 class CD:
@@ -190,7 +220,31 @@ class Trader:
                 if cap > 0:
                     add(p, mm_ask, -cap)
 
-        # 1. PEBBLES — combined_v3 dev_XL phantom-pos + arb_buy
+        # 1. PEBBLES — v12 (per-leg DEV_GAIN + per-leg MIN_SPREAD gating)
+        # Standalone PEBBLES BT: $122,896 (+$73K vs prior dev_XL-only design).
+        def _peb_mm(p, books_map, phantom_offset):
+            r = books_map.get(p)
+            if r is None:
+                return
+            bb, ba, _, _ = r
+            if ba <= bb:
+                return
+            spread = ba - bb
+            if spread <= _PEB_MIN_SPREAD[p]:
+                return  # spread-gate: skip MM in narrow spread
+            real_pos = state.position.get(p, 0)
+            phantom = real_pos + phantom_offset
+            mm_bid = bb + 1 if bb + 1 < ba else None
+            mm_ask = ba - 1 if ba - 1 > bb else None
+            if phantom <= 0 and mm_bid is not None:
+                cap = min(PB.MM_QTY, buy_cap(p))
+                if cap > 0:
+                    add(p, mm_bid, cap)
+            if phantom >= 0 and mm_ask is not None:
+                cap = min(PB.MM_QTY, sell_cap(p))
+                if cap > 0:
+                    add(p, mm_ask, -cap)
+
         peb_books = {}
         peb_mids = {}
         for p in PEBBLES:
@@ -204,12 +258,11 @@ class Trader:
             implied_XL = PEBBLES_BASKET_SUM - sum_others_mids
             dev_XL = peb_mids["PEBBLES_XL"] - implied_XL
             for p in PEBBLES:
-                offset = (PEBBLES_DEV_GAIN * dev_XL) if p == "PEBBLES_XL" else 0.0
-                pull_to_zero_mm(p, peb_books, mm_qty=10, phantom_offset=offset)
-            # arb_sell branch removed (dead — sum_bb maxes at 49999)
+                _peb_mm(p, peb_books, phantom_offset=_PEB_DEV_GAIN[p] * dev_XL)
+            # arb_sell branch never fires (sum_bb maxes at 49999 in BT)
             sum_ba = sum(peb_books[p][1] for p in PEBBLES)
             if sum_ba < PEBBLES_BASKET_SUM:
-                qty = 10
+                qty = PB.BASKET_ARB_QTY
                 for p in PEBBLES:
                     qty = min(qty, peb_books[p][3], max(0, buy_cap(p)))
                 if qty > 0:
@@ -306,26 +359,42 @@ class Trader:
                             if cap > 0:
                                 add(p, px, -cap)
 
+                # PISTA-tied-to-STRAW: PISTA is +0.91 correlated with STRAW
+                # (memory: project_round5_baskets.md). When f_B says STRAW
+                # cheap, PISTA also cheap → use same target. Adds 10
+                # contracts of capacity to the f_B trade direction.
+                # Replaces the standalone PISTA imbalance MM ($10.9K BT
+                # → $23.9K BT, +$12.9K total).
                 if SNACK_PISTA in sp_books:
                     bb, ba, bv, av = sp_books[SNACK_PISTA]
                     pos = state.position.get(SNACK_PISTA, 0)
-                    pista_scale = POS_LIMIT / SP.IMB_FULL
-                    target_pista = _clip(int(round(pista_scale * sp_imb_pista)), POS_LIMIT)
-                    gap = target_pista - pos
-                    if gap >= 0:
-                        bid_q = SP.PISTA_MAIN_QTY
-                        ask_q = SP.PISTA_OPP_QTY
-                    else:
-                        bid_q = SP.PISTA_OPP_QTY
-                        ask_q = SP.PISTA_MAIN_QTY
-                    if bb + 1 < ba and bid_q > 0:
-                        cap = min(bid_q, buy_cap(SNACK_PISTA))
-                        if cap > 0:
-                            add(SNACK_PISTA, bb + 1, cap)
-                    if ba - 1 > bb and ask_q > 0:
-                        cap = min(ask_q, sell_cap(SNACK_PISTA))
-                        if cap > 0:
-                            add(SNACK_PISTA, ba - 1, -cap)
+                    tgt_pista = target[SNACK_STRAW]
+                    gap = tgt_pista - pos
+                    if abs(gap) >= SP.MIN_GAP:
+                        aggressive = product_z[SNACK_STRAW] >= SP.Z_AGG
+                        if gap > 0:
+                            if aggressive:
+                                fill = min(gap, av, buy_cap(SNACK_PISTA))
+                                if fill > 0:
+                                    add(SNACK_PISTA, ba, fill)
+                            rem = tgt_pista - (pos + buy_used.get(SNACK_PISTA, 0))
+                            if rem > 0:
+                                px = bb + 1 if bb + 1 < ba else bb
+                                cap = min(rem, buy_cap(SNACK_PISTA))
+                                if cap > 0:
+                                    add(SNACK_PISTA, px, cap)
+                        else:
+                            need = -gap
+                            if aggressive:
+                                fill = min(need, bv, sell_cap(SNACK_PISTA))
+                                if fill > 0:
+                                    add(SNACK_PISTA, bb, -fill)
+                            rem = (pos - sell_used.get(SNACK_PISTA, 0)) - tgt_pista
+                            if rem > 0:
+                                px = ba - 1 if ba - 1 > bb else ba
+                                cap = min(rem, sell_cap(SNACK_PISTA))
+                                if cap > 0:
+                                    add(SNACK_PISTA, px, -cap)
 
         out_state = json.dumps({
             "sp_ema": sp_ema,

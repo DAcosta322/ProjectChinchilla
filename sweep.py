@@ -161,6 +161,7 @@ def _run_config(params: Dict[str, Any]) -> Tuple[Dict[str, Any],
     profit_by_day: Dict[int, float] = {}
     pnl_by_prod: Dict[int, Dict[str, float]] = {}
 
+    worst_frag_by_day: Dict[int, float] = {}
     if mode == "bt":
         reader = BT.DataReader(SCRIPT_DIR / "data")
         for d, payload in _WORKER["payloads"].items():
@@ -171,6 +172,23 @@ def _run_config(params: Dict[str, Any]) -> Tuple[Dict[str, Any],
             if r:
                 profit_by_day[d] = r["profit"]
                 pnl_by_prod[d] = dict(r["pnl_by_product"])
+                # Compute worst 100K-tick fragment PnL
+                ts_pnl = r.get("pnl_at_ts", {})
+                if ts_pnl:
+                    ts_list = sorted(ts_pnl.keys())
+                    max_ts = ts_list[-1]
+                    frag_size = 100000
+                    stride = 10000
+                    ts_step = 100
+                    worst = float('inf')
+                    for ts0 in range(0, max_ts - frag_size + 1, stride):
+                        end_ts = ts0 + frag_size - ts_step
+                        if end_ts not in ts_pnl or ts0 not in ts_pnl:
+                            continue
+                        delta = ts_pnl[end_ts] - ts_pnl[ts0]
+                        if delta < worst:
+                            worst = delta
+                    worst_frag_by_day[d] = worst if worst != float('inf') else 0.0
     elif mode == "mc":
         import random
         from mc_backtester import run_one_path
@@ -194,7 +212,7 @@ def _run_config(params: Dict[str, Any]) -> Tuple[Dict[str, Any],
     else:
         raise ValueError(f"unknown MODE: {mode}")
 
-    return params, profit_by_day, pnl_by_prod
+    return params, profit_by_day, pnl_by_prod, worst_frag_by_day
 
 
 # ---------------------------------------------------------------------------
@@ -215,14 +233,16 @@ def _print_table(results: List[dict], days: List[int], track: List[str], top: in
     if not results:
         print("(no results)")
         return
-    cols = ["TOTAL"] + [f"D{d}" for d in days] + track
+    cols = ["TOTAL", "WORST"] + [f"D{d}" for d in days] + [f"D{d}_wf" for d in days] + track
     header = f"{'rank':>4}  " + " ".join(f"{c:>10}" for c in cols) + "  PARAMS"
     print(header)
     print("-" * min(len(header), 200))
     for rank, r in enumerate(results[:top], 1):
-        line = f"{rank:>4}  {r['total']:>10.0f}"
+        line = f"{rank:>4}  {r['total']:>10.0f} {r['worst_frag']:>10.0f}"
         for d in days:
             line += f" {r['by_day'].get(d, 0):>10.0f}"
+        for d in days:
+            line += f" {r.get('worst_frag_by_day', {}).get(d, 0):>10.0f}"
         for p in track:
             v = sum(r["by_prod"].get(d, {}).get(p, 0) for d in days)
             line += f" {v:>10.0f}"
@@ -275,13 +295,16 @@ def main() -> None:
         for fut in as_completed(futures):
             done += 1
             try:
-                params, by_day, by_prod = fut.result()
+                params, by_day, by_prod, worst_by_day = fut.result()
             except Exception as e:
                 print(f"  [{done}/{len(combos)}] FAILED {futures[fut]}: {e}")
                 continue
             total = sum(by_day.values())
+            worst_frag = min(worst_by_day.values()) if worst_by_day else 0.0
             results.append({"params": params, "by_day": by_day,
-                            "by_prod": by_prod, "total": total})
+                            "by_prod": by_prod, "total": total,
+                            "worst_frag": worst_frag,
+                            "worst_frag_by_day": worst_by_day})
             if done % report_every == 0 or done == len(combos):
                 best = max(r["total"] for r in results)
                 print(f"  [{done}/{len(combos)}] best so far: {best:>10.0f}")
@@ -293,6 +316,11 @@ def main() -> None:
     days = sorted(cfg["DAYS"])
     print(f"TOP {args.top} BY TOTAL")
     _print_table(results, days, cfg["TRACK"], args.top)
+
+    print()
+    print(f"TOP {args.top} BY WORST-FRAG")
+    results_wf = sorted(results, key=lambda r: r["worst_frag"], reverse=True)
+    _print_table(results_wf, days, cfg["TRACK"], args.top)
 
     if cfg["TRACK"]:
         for prod in cfg["TRACK"]:
