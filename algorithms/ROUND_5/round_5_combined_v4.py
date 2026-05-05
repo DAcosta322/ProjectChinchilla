@@ -1,26 +1,27 @@
 """v4 — pebbles_v12 + v3_skip_cd OTHER_8 + SNACKPACK upgrades.
 
+Final BT: $453,410 (3-day total D2/D3/D4).
+
 PEBBLES from pebbles_v12.py:
 - Per-leg DEV_GAIN (XS=25, S=10, M=0, L=0, XL=25)
-- Per-leg MIN_SPREAD gate (XS=8, S=2, M=14, L=12, XL=20) — skip MM in narrow spreads
+- Per-leg MIN_SPREAD gate (XS=8, S=2, M=14, L=12, XL=20)
 - MM_QTY=7
-- v12 standalone BT: $122,896
+- Drift-stuck unwind: gate=10, edge=8, qty=5, ttl=200K (XL drift take-profit)
 
 OTHER_8 from v3_skip_cd:
 - 5-tick same-side cooldown after fills
 - Sign-fixed (buyer/seller fields), ts-deduped own_trades processing
-- SKIP_MM = {SLEEP_POD_LAMB_WOOL, ROBOT_DISHES}
+- SKIP_MM = {SLEEP_POD_LAMB_WOOL, ROBOT_DISHES, GALAXY_SOUNDS_DARK_MATTER}
 
-SNACKPACK upgrades (vs v3_skip_cd):
-- Runtime alpha computation (HL_MEAN/HL_VAR sweep-patchable)
-- Fill-VWAP anchor when |pos|>=6 (BT +$683)
-- Multi-rung exit ladder when |pos|>=8 (BT +$122)
-- Asymmetric Z_FULL (entry vs exit) — disabled by default (no BT gain)
-- Soft-clip target — disabled by default (LOSES BT)
-- Drift detector — disabled by default (no BT gain)
+SNACKPACK:
+- Per-pair anchor (A=CHOC/VAN: gate=4 edge=10; B=STRAW/RASP: gate=3 edge=8)
+- Multi-rung exit ladder when |pos|>=8: offsets=(0,1) qty=2
+- Z_AGG=2.5
 - PISTA-tied-to-STRAW (+$12.9K vs imbalance MM)
-- sp_imb_pista state removed
-- PISTA_LEV at extreme z_B — disabled by default (target saturates ±10)
+- Runtime alpha computation (HL_MEAN/HL_VAR sweep-patchable)
+
+Sub 573706 confirmed: robustness retune (MM_QTY=3, Z_AGG=3.0) lost -$2,559
+on platform fragment because it suppressed real spike captures. Reverted.
 """
 
 from datamodel import OrderDepth, TradingState, Order
@@ -79,7 +80,7 @@ class CD:
 
 class P:
     """PEBBLES parameters from pebbles_v12.py."""
-    MM_QTY = 3   # was 7 — fragment-robustness retune. Worst-frag -$4,046 -> -$2,610.
+    MM_QTY = 7   # restored from robustness retune (sub 573706 lost -$1,246 on platform vs 572069 with MM_QTY=7)
     DEV_GAIN_XS = 25.0
     DEV_GAIN_S  = 10.0
     DEV_GAIN_M  = 0.0
@@ -105,7 +106,7 @@ class SP:
     HL_VAR  = 8000
     Z_FULL_ENTRY = 0.2
     Z_FULL_EXIT  = 0.2
-    Z_AGG = 3.0  # was 2.5 — fragment-robustness retune (improves worst-frag $382)
+    Z_AGG = 2.5  # restored from robustness retune (sub 573706 missed a $10,206 VAN spike → -$1,313)
     MIN_STD_A = 150.0
     MIN_STD_B = 200.0
     WARMUP_TICKS = 200
