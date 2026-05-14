@@ -7,7 +7,7 @@ Manual team: Daniel Singh and Roy Sulaiman.
 ## Who are we
 
 First year students at UWaterloo (all BMath), first time doing this.
-Our team was Burrito Warriors, top 11% global for algorithmic, top 62% global for manual, and top 22 in Canada.
+Our team was Burrito Warriors, top 11% global for algorithmic, top 62% global for manual, and top 25 in overall Canada.
 
 ## Methodology for Algorithmic
 
