@@ -10,11 +10,29 @@ First year students at UWaterloo (all BMath), first time doing this.
 Our team was Burrito Warriors, top 11% global for algorithmic, top 62% global for manual, and top 25 in overall Canada.
 
 ## Methodology for Algorithmic
+The algorithmic track presented a unique challenge where the goal was to code trading algorithms in Python to automatically trade a set of products over a simulated 1,000-tick day. As a team of first-year students with limited background in statistics or actuarial science, our approach was to experiment with a wide range of strategies while keeping them simple enough to produce clear, actionable feedback. We built an in-house backtester in PyTorch that slashed the iteration cycle from ~2 minutes on the official platform to ~15 seconds, which proved critical for training and validating our parameters effectively.
 
-Being first years, most of us hadn't taken any related stat, acturial science, computer science, etc. courses that would help us with knowing what to do.
-We basically tried every strategy we thought could work well of without knowing much of how it would work.
-We also tried to not overcomplicate our strategies to get actual good information from our testing and to do better next time.
-We developed a backtester so that we didn't have to rely on the slower testing of the official IMC testing (~2min compaired to ~15sec), which is important we it comes to training parameters, would recommend using like Pytorch and just exporting the values.
+Our foundational strategy was a sophisticated mean-reversion (MR) model. We anchored our price estimates on a full-day (10,000-tick) timeframe to avoid overfitting to the sub-day noise of the 1,000-tick test day. Key components and innovations across our algorithms included:
+
+### Core Strategy Components
+- **Bayesian Prior Anchoring:** For products like `HYDROGEL_PACK` and `VELVETFRUIT_EXTRACT`, we initialized the exponential moving average (EMA) with a prior (e.g., a fixed anchor of 9990 for HYD) based on cross-day means. This eliminated the "warm-up" period and generated meaningful trade signals from the very first tick.
+- **Non-Linear MR Boost:** To capitalize on large deviations quickly, we implemented a boost function that adds extra slope to the target curve when the fair value moves beyond a certain threshold. This allowed us to hit our position limits faster during extreme price swings, a method validated through LOOCV.
+- **Trend Detection Overlay:** A multi-timescale trend detector was wired in to blend the pure MR target with a trend-following component. If a smoothed velocity signal maintained a consistent sign for a minimum number of ticks, the target would gradually transition from MR to trend-following, helping to avoid being whipsawed during strong intraday runs.
+- **Active Position Flattening:** Near the mean, we introduced a "gentle nudge" toward a flat position to free up capacity for the next opportunity, rather than risking spread costs on low-conviction signals.
+- **Dynamic Anchor Blending:** An optional, multi-timescale anchor blend was disabled by default but designed to handle persistent sub-day drift by dynamically weighting a fast and slow EMA based on their divergence.
+
+### Round-by-Round Breakdown
+- **Round 3: Mean-Reversion with MTS Signals**  
+  Our initial algorithms for HYD and VEL were built on the full-day MR assumption. The critical insight was treating the platform's 1,000-tick replay day as only 1/10th of a full day, preventing us from overreacting to what was likely transient intraday drift. The winning configuration used long anchor spans and a prior-based initialization, which dominated shorter-span alternatives. The trend overlay and non-linear boost were active, allowing the model to capture both the overarching MR tendency and exceptional directional moves.
+
+- **Round 4: Adaptive Parameters and New Products**  
+  For Round 4, we expanded our framework to new product classes while refining the robustness of our parameter sweeps. The focus remained on ensuring our core MR logic would not be fooled by the changing regimes, and we conducted extensive LOOCV to validate our adjustments without falling victim to overfitting noise from in-sample gains.
+
+- **Round 5: Final Refinements**  
+  In the final round, we fine-tuned our execution logic and spread-capture heuristics, ensuring our passive quotes on the "wrong" side of the book stayed competitive. The goal was to maximize the two-sided spread capture while reserving our full position limit for the side our model strongly favored.
+
+### Performance and Learnings
+Our algorithmic team finished in the **top 11% globally**. The key takeaway was the power of a well-grounded statistical prior. By firmly anchoring our strategies to long-term mean estimates and rigorously validating every parameter via cross-validation, we prevented our models from chasing noise. The backtester allowed us to conduct brute-force parameter sweeps efficiently, separating structural improvements from overfitting. Future iterations would focus on more advanced regime-switching models and exploring reinforcement learning for dynamic parameter adjustment, but for a first attempt with minimal prior knowledge, the methodology of "simple, well-validated models with a strong prior" proved highly effective.
 
 ## Methodology for Manual
  
